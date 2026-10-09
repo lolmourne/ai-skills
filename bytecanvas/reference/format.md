@@ -26,10 +26,24 @@ may point at the same image index.
   "savedAt": "2026-10-02T06:00:00.000Z",
   "activeIndex": 0,               // page shown on open
   "pages": [ManifestPage, ...],   // at least one
-  "images": [{ "offset": 0, "length": 1234, "type": "image/png", "width": 300, "height": 120 }]
+  "images": [{ "offset": 0, "length": 1234, "type": "image/png", "width": 300, "height": 120 }],
   //            ^ into the image section (not the file)
+  "cmyk": { "#cccccc": { "c": 20, "m": 20, "y": 20, "k": 0 } }   // optional, see below
 }
 ```
+
+`cmyk` (optional, added without a version bump — older files and older
+readers are unaffected) records CMYK values typed in the colour picker, keyed
+by lower-case `#rrggbb` (alpha dropped), each ink 0..100. The colours on
+layers stay hex; this only says how a colour should *print*. The picker shows
+these values for that colour and a CMYK PDF export writes them exactly; any
+colour not listed is separated by formula (K = 1 − max(R,G,B), full black
+generation, no ICC profile). Absent when empty. On open, malformed entries are
+dropped and inks clamped to 0..100.
+
+Not in the file, on purpose: zoom and pan. Each page remembers its own view
+while the app is open (a page never visited is fitted to the screen), but that
+is how a page is being looked at, not part of it.
 
 ### Page
 
@@ -71,8 +85,12 @@ may point at the same image index.
 }
 ```
 
-**Pixels are the source of truth on open.** `text`/`diagram` specs are only used
-to re-render when the user edits the layer.
+**Pixels are the source of truth on open** — for the screen, image export and
+the flattened PDF. `text`/`diagram` specs are used to re-render when the user
+edits the layer, **and by the editable PDF export**, which writes text layers
+as real text, diagram shapes and connectors as vector paths, all from their
+specs rather than their pixels. A spec that disagrees with its pixels shows up
+there, so keep them consistent (`build.mjs` does).
 
 ### Text layers
 

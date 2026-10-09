@@ -26,6 +26,10 @@ stacked using `lines * size * lineHeight`). Relative paths
     "font": "Roboto", "size": 16, "color": "#000000", "lineHeight": 1.25,
     "iconStyle": "filled"             // filled | outlined | round | sharp | two-tone
   },
+  "cmyk": {                           // optional: brand colours' exact print values
+    "#E30613": { "c": 0, "m": 100, "y": 100, "k": 0 },   // or [0, 100, 100, 0]
+    "#1D1D1B": [0, 0, 0, 100]
+  },                                  // keyed by the hex the layers use; see "Printing" in SKILL.md
   "pages": [Page, ...],
   "slices": [                         // extra crops, written to <pngDir>/slices/<name>.png
     { "name": "home-header", "page": "Screen / Home", "x": 0, "y": 0, "w": 390, "h": 120, "scale": 1 }

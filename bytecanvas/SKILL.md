@@ -24,7 +24,10 @@ effects). This skill produces those files from a project's real design code.
 9. `Asset / …` — one page per exportable component, sized to it (transparent background)
 
 Pages are the unit of export in ByteCanvas (File › Export exports the current
-page), so **anything the user may want as a PNG gets its own page**. The builder
+page as an image; PDF can take every page), so **anything the user may want as a PNG gets its own page**.
+Each page keeps its own zoom in the app and a page opened for the first time is
+fitted, so pages of very different sizes (a phone screen next to an A4 sheet)
+are fine side by side. The builder
 also writes every page to PNG directly (`exports/`), plus optional crops
 (`slices`), so assets exist without opening the app at all.
 
@@ -101,6 +104,8 @@ Where the `.bcanvas` and `exports/` are, the page list, how to regenerate (`node
 For staff guides, scenario walk-throughs and anything meant for paper:
 
 - Lay pages out in **points**: A4 = `width: 595.2, height: 841.92, scale: 300/72` → 2480 × 3508 px, so ByteCanvas's PDF export at 300 DPI prints at exactly A4. Margins ~36 pt, body 8.5–10 pt.
+- **Exporting for print** (tell the user; File › Export › PDF): 300 DPI; **Colour: CMYK** for a print shop (images go lossless — no CMYK JPEG); **Type: Editable** when someone will touch the file afterwards in Acrobat/Illustrator — each layer becomes a named PDF layer, text layers become real text with the font embedded (Google fonts are fetched from Fontsource at export, so it needs network), diagram shapes/connectors become vectors. Kit shapes, icons and screenshots are plain pixel layers, so they stay images; layers with effects (shadows) are placed as images with invisible text over them. **Flattened** is one picture per page — exactly what you see.
+- **Brand print colours**: when the project has official CMYK values (brand book, `print` tokens), put them in the scene's top-level `cmyk` map keyed by the hex the layers use (`reference/scene-schema.md`). They land in the `.bcanvas`, show in ByteCanvas's colour picker, and a CMYK PDF prints them exactly instead of by formula. Never invent CMYK values — omit the map if the code/brand book has none.
 - Make the scene a function and set paragraphs with `tools.wrap` (exact widths); stack blocks by the returned line counts. Print a warning when a page's content passes the footer.
 - **Use real screenshots of the app, never redrawn screens** — staff compare the paper to the phone in their hand, and a reconstruction drifts from production. For Flutter, capture with `flutter test` (no device, no backend):
   - a fake `HttpOverrides` answers every API call from fixture JSON in the exact shape the models parse — **never point the app at production or create real data**; writes are answered locally;
@@ -123,12 +128,14 @@ Read the manifest without touching images:
 node -e 'const b=require("fs").readFileSync(process.argv[1]);const n=b.readUInt32LE(12);const m=JSON.parse(b.subarray(16,16+n));for(const p of m.pages)console.log(p.name,p.width+"x"+p.height,p.layers.length+" layers")' file.bcanvas
 ```
 
-Small metadata edits (rename pages/layers, reorder, move, hide, change opacity) can be done by rewriting the manifest and re-packing with the same image bytes — see `reference/format.md`. Anything that changes pixels (text content, colours) is easier to regenerate from the scene.
+Small metadata edits (rename pages/layers, reorder, move, hide, change opacity) can be done by rewriting the manifest and re-packing with the same image bytes — see `reference/format.md`. Keep the optional top-level `cmyk` map when re-packing; dropping it loses the user's typed print colours.
+
+Moving or copying layers between pages is also a manifest edit: give each copy a new unique `id`, and re-point any `connector.from/to.layerId` at the copies (or set it to `null` with `anchor: null` when the shape it joined was not copied) — the same rule the app's own paste follows. Anything that changes pixels (text content, colours) is easier to regenerate from the scene.
 
 ## Gotchas
 
 - Fonts and icons come from Google Fonts at build time — needs network. A family not on Google Fonts renders in a fallback (warned).
-- `.bcanvas` layers are raster. Text layers also carry a `text` spec, so double-clicking one in ByteCanvas edits it; shapes are plain pixels (resize = resample).
+- `.bcanvas` layers are raster. Text layers also carry a `text` spec, so double-clicking one in ByteCanvas edits it — and so the editable PDF export writes it as real text; shapes are plain pixels (resize = resample) and stay images in any PDF.
 - Shadows are stored as ByteCanvas drop-shadow **effects** (editable), not baked in.
 - Big documents are fine (a 27-page guideline is ~9 MB / ~800 layers, ~5 s to build). Photos keep their own resolution up to 4x the box.
 - Only one ByteCanvas e2e run at a time in the repo — `preview.mjs` uses the public URL and its own Chrome, so it doesn't collide.

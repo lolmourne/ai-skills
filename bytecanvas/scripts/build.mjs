@@ -455,6 +455,15 @@ function pageRuntime() {
 // logical units (Flutter dp) and multiplied up to pixels here, so a scene can
 // copy padding, radii and font sizes straight out of the Dart code.
 
+/** A text layer's per-character extras, in ByteCanvas's run style. */
+function runStyle(l) {
+	const style = {};
+	if (l.letterSpacing) style.tracking = Math.round((l.letterSpacing / l.size) * 10000) / 100;
+	if (l.underline) style.underline = true;
+	if (l.strike) style.strike = true;
+	return style;
+}
+
 const GEOM = ['x', 'y', 'w', 'h', 'x1', 'y1', 'x2', 'y2', 'size', 'strokeWidth', 'letterSpacing', 'maxWidth', 'width'];
 
 function scaleLayer(l, k) {
@@ -614,7 +623,10 @@ try {
 					align: l.align,
 					lineHeight: l.lineHeight,
 					color: l.color,
-					runs: [{ text: String(l.text), style: {} }]
+					// What the picture was drawn with has to be in the spec too, or
+					// the first edit in ByteCanvas re-renders the words without it.
+					// ByteCanvas keeps tracking in % of the size, not pixels.
+					runs: [{ text: String(l.text), style: runStyle(l) }]
 				};
 			}
 			if (l.shadow) {
@@ -679,7 +691,7 @@ try {
 		}
 	}
 
-	writeFileSync(outPath, pack(manifestPages, images, scene.activeIndex ?? 0));
+	writeFileSync(outPath, pack(manifestPages, images, scene.activeIndex ?? 0, cmykMemory(scene.cmyk)));
 	const total = images.reduce((n, i) => n + i.bytes.length, 0);
 	console.log(`wrote ${outPath} — ${manifestPages.length} pages, ${images.length} images, ${(total / 1048576).toFixed(1)} MB`);
 	if (pngDir) console.log(`png exports in ${pngDir}`);
@@ -691,8 +703,31 @@ function slug(s) {
 	return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'page';
 }
 
+/**
+ * A scene's brand CMYK values in the shape the app stores them: keyed by
+ * lower-case six-digit hex, alpha dropped, each ink 0..100. Accepts
+ * `{ c, m, y, k }` or `[c, m, y, k]`. ByteCanvas shows these in its colour
+ * picker and prints them exactly in a CMYK PDF; any colour not listed is
+ * separated by formula.
+ */
+function cmykMemory(raw) {
+	const out = {};
+	for (const [hex, v] of Object.entries(raw ?? {})) {
+		const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})([0-9a-f]{2})?$/i.exec(hex.trim());
+		if (!m) throw new Error(`cmyk: "${hex}" is not a hex colour`);
+		const six = m[1].length === 3 ? [...m[1]].map((c) => c + c).join('') : m[1];
+		const [c, mg, y, k] = Array.isArray(v) ? v : [v?.c, v?.m, v?.y, v?.k];
+		const inks = [c, mg, y, k].map(Number);
+		if (inks.some((n) => !Number.isFinite(n) || n < 0 || n > 100)) {
+			throw new Error(`cmyk: "${hex}" needs four inks from 0 to 100`);
+		}
+		out[`#${six.toLowerCase()}`] = { c: inks[0], m: inks[1], y: inks[2], k: inks[3] };
+	}
+	return out;
+}
+
 /** The `.bcanvas` container: magic, version, manifest length, manifest, PNGs. */
-function pack(pages, images, activeIndex) {
+function pack(pages, images, activeIndex, cmyk = {}) {
 	let offset = 0;
 	const table = images.map((img) => {
 		const entry = { offset, length: img.bytes.length, type: 'image/png', width: img.width, height: img.height };
@@ -707,6 +742,8 @@ function pack(pages, images, activeIndex) {
 		pages,
 		images: table
 	};
+	// Optional in the format: left out when there is none, as the app does.
+	if (Object.keys(cmyk).length) manifest.cmyk = cmyk;
 	const json = Buffer.from(JSON.stringify(manifest), 'utf8');
 	const header = Buffer.alloc(16);
 	header.write('BYTECNVS', 0, 'ascii');
