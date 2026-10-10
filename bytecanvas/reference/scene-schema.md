@@ -76,7 +76,11 @@ Colours are `#RGB`, `#RRGGBB` or `#RRGGBBAA` (`kit.alpha(hex, a)` for
 |---|---|
 | `rect` | `x y w h`, `fill`, `gradient`, `radius` (number or `[tl,tr,br,bl]`), `stroke`, `strokeWidth`, `dash` |
 | `ellipse` | as rect (kit: `circle(cx, cy, r, o)`) |
+| `polygon` | `x y w h`, `sides` (3–64), and the shape fields below — fills its box |
+| `star` | `x y w h`, `points` (3–64), `inner` (inner radius as a fraction, 0..1) |
+| `path` | `d` (SVG path data — every command, arcs included) or `nodes` (ByteCanvas nodes), drawn at `scale` with its origin at `x y`; `fill` defaults to black when there is no stroke |
 | `line` | `x1 y1 x2 y2`, `color`, `strokeWidth`, `dash`, `cap` |
+| `group` | `name`, `layers: [...]` (nested), `opacity`, `visible`, `collapsed` — not drawn itself |
 | `text` | `text` (`\n` for lines — no wrapping), `x y` = top-left of the first line box, `font`, `size`, `weight`, `italic`, `color`, `align`, `lineHeight`, `letterSpacing`, `underline`, `strike`; optional `width` + `align: center/right` aligns the block inside `[x, x+width]` |
 | `icon` | `icon` (Material Icons ligature name, e.g. `local_laundry_service`), `x y` top-left, `size`, `color`, `style` |
 | `image` | `src` (file path, data URL or https), `x y w h`, `fit` (`cover` default, `contain`, `fill`), `radius`, `tint` (recolour all opaque pixels) |
@@ -86,9 +90,33 @@ Colours are `#RGB`, `#RRGGBB` or `#RRGGBBAA` (`kit.alpha(hex, a)` for
 `gradient`: `{ "type": "linear", "angle": 135, "stops": [["#062A44", 0], ["#0A3D62", 1]] }`
 — CSS convention (0° = up, 90° = right, 180° = down); `type: "radial"` too.
 
-Text becomes an editable ByteCanvas text layer (2x raster + `text` spec);
-everything else becomes a plain raster layer. Strokes are drawn *inside* the
-box, so a stroked rect is exactly `w × h`.
+Text becomes an editable ByteCanvas text layer (2x raster + `text` spec).
+`rect`, `ellipse`, `polygon`, `star`, `line` and `path` become **vector
+layers** (2x raster + `vector` spec): live shapes the app redraws sharp at any
+size, whose corners, sides and points stay editable in its shape panel, and
+which its SVG and editable-PDF exports write as real paths. A rect or ellipse
+with a `gradient` stays a picture — a vector's fill is one colour. Icons,
+images, SVGs and page thumbnails are pictures.
+
+Strokes on rects and ellipses are drawn *inside* the box, so a stroked rect is
+exactly `w × h`. Paths, polygons, stars and lines are stroked on their centre
+line. Shape fields, all optional:
+
+| field | |
+|---|---|
+| `fill` / `stroke` | colours; omit for none |
+| `strokeWidth`, `dash` | as above |
+| `strokeAlign` | `center`, `inside`, `outside` (rect/ellipse default `inside`) |
+| `cap` / `join` | `butt round square` / `miter round bevel` |
+| `fillRule` | `nonzero` (default) or `evenodd` — punch a hole with a second subpath |
+
+Two more layer fields:
+
+- `clipBelow: true` — a clipping mask: the layer shows only where the layer
+  (or group) beneath it in the same group has pixels. `kit.clipped(base, layers)`
+  sets it for you.
+- `clip` (the crop above) on a vector layer becomes a rectangular vector mask
+  rather than a cut bitmap, so the shape stays editable.
 
 ## Kit cheatsheet (`scripts/kit.mjs`)
 
@@ -101,7 +129,10 @@ k.text(t, x, y, o)      k.textMid(t, x, cy, o)   k.textIn(t, {x,y,w,h}, o)   // 
 k.textBox(tools, t, x, y, w, o)  // → { layer, lines, h }: wrapped with real metrics (needs o.font; tools.fonts() first)
 k.icon(name, x, y, size, color, o)   k.iconAt(name, cx, cy, size, color, o)
 k.image(src, x, y, w, h, o)   k.svg(srcOrMarkup, x, y, w, h, o)   k.pageRef(page, x, y, w, h, o)
-k.place(layers, { x, y, scale, prefix })     // move/scale a component drawn at (0,0)
+k.polygon(x, y, w, h, sides, o)   k.star(x, y, w, h, points, inner, o)   k.path(d, x, y, { scale, fill, ... })
+k.group(name, layers, o)            // a named, foldable group in the layer panel
+k.clipped(base, layers)             // layers clipped to base (photo in a circle)
+k.place(layers, { x, y, scale, prefix, group })  // move/scale a component drawn at (0,0); `group` wraps it
 k.approxWidth(text, size, weight)  k.lineBox(size, lh, lines)  k.alpha(hex, a)  k.flutterColor('0xFF0A3D62')
 k.boxShadow({ color, opacity, blur, dx, dy })  k.contrast(hexA, hexB)
 k.statusBar(w, { color, font })  k.homeIndicator(w, h, color)  k.phone(page, x, y, w, h, { label })

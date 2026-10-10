@@ -2,7 +2,8 @@
 
 A [Claude Code](https://claude.com/claude-code) skill that turns an app's real design code (Flutter, web, …) into
 [ByteCanvas](https://bytecanvas.adrianuskevinkusuma.com) `.bcanvas` files: design guidelines, style guides,
-UI kits and mock screens. Every element is a separate, editable layer, and each page is also exported as a PNG.
+UI kits, brand guidelines, logos and mock screens. Every element is a separate, editable layer — shapes and logo paths
+as live vectors, components as named groups, photos clipped to their shapes — and each page is also exported as a PNG.
 
 Ask Claude for "a design guideline for this app in .bcanvas format" and it will read the theme, type scale,
 spacing, icons, components and screens out of the code, lay them out as a scene, build the file and check
@@ -26,8 +27,9 @@ Fonts and icons are loaded from Google Fonts at build time, so building needs ne
 |---|---|
 | `SKILL.md` | The workflow Claude follows: extract tokens from the code, write a scene, build, validate, look. |
 | `scripts/build.mjs` | Rasterises a scene (`.mjs` or JSON) in headless Chrome and packs the `.bcanvas`, plus PNGs of every page. Warns when layers run off a page or text overflows its box. |
-| `scripts/kit.mjs` | Authoring helpers: primitives, `place()` for reusable components, `textBox()` for wrapped paragraphs, phone chrome, ready-made guideline sheets. |
-| `scripts/validate.mjs` | Structural checks on a `.bcanvas`; also runs ByteCanvas's own reader when a checkout is found (`--repo` or `BYTECANVAS_REPO`). |
+| `scripts/kit.mjs` | Authoring helpers: primitives, vector shapes (`polygon`, `star`, `path` from SVG path data), `group()` and `place(…, { group })` for components, `clipped()` for clipping masks, `textBox()` for wrapped paragraphs, phone chrome, ready-made guideline sheets. |
+| `scripts/vector.mjs` | Shape geometry, an SVG path parser (arcs included) and stroke padding, matching the app's own vector layers to the pixel. |
+| `scripts/validate.mjs` | Structural checks on a `.bcanvas` — images, layers, vector specs, groups kept together; also runs ByteCanvas's own reader when a checkout is found (`--repo` or `BYTECANVAS_REPO`). |
 | `scripts/preview.mjs` | Opens a file in the live web app and screenshots chosen pages (`--url` / `BYTECANVAS_URL` to point elsewhere). |
 | `reference/` | The `.bcanvas` file format and the scene schema. |
 | `examples/flutter-guideline.mjs` | A complete guideline for a Flutter POS app: tokens, components, screens, flow and asset pages. |

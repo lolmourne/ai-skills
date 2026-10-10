@@ -15,6 +15,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { launch } from './chrome.mjs';
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { VECTOR_TYPES, layerSpec, specPaths, vectorBox } from './vector.mjs';
 
 // ---- args ------------------------------------------------------------------
 
@@ -126,13 +127,48 @@ function inlineSources(layer) {
 	}
 }
 
+/**
+ * Groups in a scene are nested (`{ type: 'group', layers: [...] }`); in the
+ * file they are a flat stack whose layers name their group, beside a list of
+ * the groups themselves — ByteCanvas's own model. Flattened here, once.
+ */
+let groupCounter = 0;
+function flattenGroups(layers, parentId, groups, out = []) {
+	for (const l of layers ?? []) {
+		if (l?.type === 'group') {
+			const id = `group_${++groupCounter}_${Math.random().toString(36).slice(2, 8)}`;
+			groups.push({
+				id,
+				name: l.name ?? 'Group',
+				parentId,
+				visible: l.visible !== false,
+				opacity: l.opacity ?? 1,
+				collapsed: l.collapsed === true
+			});
+			flattenGroups(l.layers, id, groups, out);
+		} else if (l) {
+			out.push(parentId ? { ...l, __group: parentId } : l);
+		}
+	}
+	return out;
+}
+
 if (!Array.isArray(scene.pages) || !scene.pages.length) throw new Error('scene has no pages');
 const pageNames = new Set();
 for (const page of scene.pages) {
 	if (!page.name) throw new Error('every page needs a name');
 	if (pageNames.has(page.name)) throw new Error(`duplicate page name "${page.name}"`);
 	pageNames.add(page.name);
-	for (const l of page.layers ?? []) inlineSources(l);
+	page.__groups = [];
+	page.layers = flattenGroups(page.layers, null, page.__groups);
+	// A group with nothing in it would be dropped by the app on open.
+	const used = new Set(page.layers.map((l) => l.__group).filter(Boolean));
+	for (let changed = true; changed; ) {
+		changed = false;
+		for (const g of page.__groups) if (used.has(g.id) && g.parentId && !used.has(g.parentId)) { used.add(g.parentId); changed = true; }
+	}
+	page.__groups = page.__groups.filter((g) => used.has(g.id));
+	for (const l of page.layers) inlineSources(l);
 }
 
 // ---- the in-page renderer ---------------------------------------------------
@@ -392,6 +428,79 @@ function pageRuntime() {
 		}
 	}
 
+	/** Trace ByteCanvas paths (nodes with optional handles) into a Path2D. */
+	function pathOf(paths) {
+		const p = new Path2D();
+		for (const path of paths) {
+			const n = path.nodes.length;
+			if (!n) continue;
+			p.moveTo(path.nodes[0].x, path.nodes[0].y);
+			for (let i = 0; i < (path.closed ? n : n - 1); i++) {
+				const a = path.nodes[i], b = path.nodes[(i + 1) % n];
+				if (!a.out && !b.in) p.lineTo(b.x, b.y);
+				else {
+					const c1 = a.out ?? a, c2 = b.in ?? b;
+					p.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, b.x, b.y);
+				}
+			}
+			if (path.closed) p.closePath();
+		}
+		return p;
+	}
+
+	/**
+	 * A vector spec painted exactly as the app's `paintVector` does — fill,
+	 * then a stroke on the centre line, clipped inside, or masked outside —
+	 * into a bitmap covering its box, so the app's first redraw of it changes
+	 * nothing.
+	 */
+	function rasterVector(spec, paths, w, h, box) {
+		const c = canvas(w, h);
+		const ctx = c.getContext('2d');
+		ctx.scale(w / box.width, h / box.height);
+		ctx.translate(box.pad, box.pad);
+		const shape = pathOf(paths);
+		if (spec.fill) {
+			ctx.fillStyle = spec.fill;
+			ctx.fill(shape, spec.fillRule);
+		}
+		if (spec.stroke && spec.strokeWidth > 0) {
+			const closed = paths.every((p) => p.closed);
+			const align = closed ? spec.strokeAlign : 'center';
+			const style = (g, width) => {
+				g.strokeStyle = spec.stroke;
+				g.lineWidth = width;
+				g.lineCap = spec.lineCap;
+				g.lineJoin = spec.lineJoin;
+				g.miterLimit = spec.miterLimit;
+				g.setLineDash(spec.dash.length ? spec.dash : []);
+			};
+			if (align === 'center') {
+				style(ctx, spec.strokeWidth);
+				ctx.stroke(shape);
+			} else if (align === 'inside') {
+				ctx.save();
+				ctx.clip(shape, spec.fillRule);
+				style(ctx, spec.strokeWidth * 2);
+				ctx.stroke(shape);
+				ctx.restore();
+			} else {
+				const scratch = canvas(w, h);
+				const s = scratch.getContext('2d');
+				s.setTransform(ctx.getTransform());
+				style(s, spec.strokeWidth * 2);
+				s.stroke(shape);
+				s.globalCompositeOperation = 'destination-out';
+				s.fill(shape, spec.fillRule);
+				ctx.save();
+				ctx.setTransform(1, 0, 0, 1, 0, 0);
+				ctx.drawImage(scratch, 0, 0);
+				ctx.restore();
+			}
+		}
+		return { c };
+	}
+
 	function shadowColor(hex, opacity) {
 		let h = hex.replace('#', '');
 		if (h.length === 3) h = h.split('').map((ch) => ch + ch).join('');
@@ -400,31 +509,79 @@ function pageRuntime() {
 		return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 	}
 
-	/** Composite a page the way ByteCanvas renders it, for the PNG exports. */
-	function compositePage(page, built) {
+	/**
+	 * Composite a page the way ByteCanvas renders it, for the PNG exports:
+	 * groups faded as one picture, clipped layers painted only where their
+	 * base is, vector masks clipping their layer — the app's own rules.
+	 */
+	function compositePage(page, built, groups) {
 		const c = canvas(page.width, page.height);
 		const ctx = c.getContext('2d');
 		if (page.background) { ctx.fillStyle = page.background; ctx.fillRect(0, 0, c.width, c.height); }
+
+		const byId = new Map(groups.map((g) => [g.id, g]));
+		const root = [];
+		const lists = new Map();
+		const listOf = (gid) => {
+			const g = gid ? byId.get(gid) : null;
+			if (!g) return root;
+			if (!lists.has(g.id)) {
+				const list = [];
+				lists.set(g.id, list);
+				listOf(g.parentId).push({ group: g, children: list, clipped: [] });
+			}
+			return lists.get(g.id);
+		};
 		for (const b of built) {
-			if (b.visible === false) continue;
-			ctx.save();
-			ctx.globalAlpha = b.opacity;
-			ctx.globalCompositeOperation = { normal: 'source-over' }[b.blendMode] ?? b.blendMode;
+			const list = listOf(b.groupId);
+			const base = list[list.length - 1];
+			if (b.clip && base) base.clipped.push(b);
+			else list.push({ layer: b, clipped: [] });
+		}
+
+		const drawItem = (g, b, alpha, op) => {
+			g.save();
+			g.globalAlpha = alpha;
+			g.globalCompositeOperation = op;
 			const t = b.transform;
 			const dw = b.width * t.scaleX, dh = b.height * t.scaleY;
-			ctx.translate(t.x + dw / 2, t.y + dh / 2);
-			ctx.rotate(t.rotation);
+			g.translate(t.x + dw / 2, t.y + dh / 2);
+			g.rotate(t.rotation);
+			g.translate(-dw / 2, -dh / 2);
+			g.scale(t.scaleX, t.scaleY);
+			if (b.mask) g.clip(pathOf(b.mask.paths), b.mask.fillRule);
 			const s = b.effects?.dropShadow;
 			if (s?.enabled) {
 				const rad = (s.angle * Math.PI) / 180;
-				ctx.shadowColor = shadowColor(s.color, s.opacity);
-				ctx.shadowBlur = s.blur;
-				ctx.shadowOffsetX = Math.cos(rad) * s.distance;
-				ctx.shadowOffsetY = Math.sin(rad) * s.distance;
+				g.shadowColor = shadowColor(s.color, s.opacity);
+				g.shadowBlur = s.blur;
+				g.shadowOffsetX = Math.cos(rad) * s.distance;
+				g.shadowOffsetY = Math.sin(rad) * s.distance;
 			}
-			ctx.drawImage(b.canvas, -dw / 2, -dh / 2, dw, dh);
-			ctx.restore();
-		}
+			g.drawImage(b.canvas, 0, 0, b.width, b.height);
+			g.restore();
+		};
+		const blend = (m) => ({ normal: 'source-over' })[m] ?? m;
+		const shown = (n) => (n.group ? n.group.visible && n.group.opacity > 0 : n.layer.visible !== false && n.layer.opacity > 0);
+		const draw = (g, nodes) => {
+			for (const n of nodes) {
+				if (!shown(n)) continue;
+				const clipped = n.clipped.filter((b) => b.visible !== false && b.opacity > 0);
+				if (n.layer && !clipped.length) { drawItem(g, n.layer, n.layer.opacity, blend(n.layer.blendMode)); continue; }
+				if (n.group && !clipped.length && n.group.opacity >= 1) { draw(g, n.children); continue; }
+				const scratch = canvas(c.width, c.height);
+				const sg = scratch.getContext('2d');
+				if (n.layer) drawItem(sg, n.layer, 1, 'source-over');
+				else draw(sg, n.children);
+				for (const b of clipped) drawItem(sg, b, b.opacity, 'source-atop');
+				g.save();
+				g.globalAlpha = n.layer ? n.layer.opacity : n.group.opacity;
+				g.globalCompositeOperation = n.layer ? blend(n.layer.blendMode) : 'source-over';
+				g.drawImage(scratch, 0, 0);
+				g.restore();
+			}
+		};
+		draw(ctx, root);
 		return c;
 	}
 
@@ -447,7 +604,7 @@ function pageRuntime() {
 		return { c: out, dx: lx0 * scale, dy: ly0 * scale };
 	}
 
-	window.__bcanvas = { loadFonts, rasterLayer, compositePage, pngBase64, canvas, cropTo };
+	window.__bcanvas = { loadFonts, rasterLayer, rasterVector, compositePage, pngBase64, canvas, cropTo };
 }
 
 // ---- unit handling ----------------------------------------------------------
@@ -473,6 +630,8 @@ function scaleLayer(l, k) {
 	else if (Array.isArray(o.radius)) o.radius = o.radius.map((r) => r * k);
 	if (Array.isArray(o.dash)) o.dash = o.dash.map((d) => d * k);
 	if (o.clip) o.clip = { x: o.clip.x * k, y: o.clip.y * k, w: o.clip.w * k, h: o.clip.h * k };
+	// Path data is in its own units; its `scale` takes the page's along.
+	if (o.type === 'path') o.scale = (o.scale ?? 1) * k;
 	if (o.shadow) o.shadow = { ...o.shadow, blur: (o.shadow.blur ?? 8) * k, distance: (o.shadow.distance ?? 4) * k };
 	return o;
 }
@@ -537,6 +696,77 @@ try {
 		const below = []; // bottoms of layers that only run off the bottom: summarised, often a deliberate fold
 		for (const raw of page.layers ?? []) {
 			const l = scaleLayer(withDefaults(raw, scene), k);
+			// Shapes, lines and paths are vector layers: a spec the app redraws
+			// sharp at any size, beside the bitmap it would draw from it.
+			const vec = VECTOR_TYPES.has(l.type) ? layerSpec(l) : null;
+			if (vec) {
+				const box = vectorBox(vec.spec);
+				// 2x like the app, short of a pixel budget for poster-sized shapes.
+				const factor = box.width * box.height * 4 > 24e6 ? Math.max(0.25, Math.sqrt(24e6 / (box.width * box.height))) : 2;
+				const bw = Math.max(1, Math.ceil(box.width * factor));
+				const bh = Math.max(1, Math.ceil(box.height * factor));
+				const vr = await chrome.evaluate(`(() => {
+					const r = __bcanvas.rasterVector(${JSON.stringify(vec.spec)}, ${JSON.stringify(specPaths(vec.spec))}, ${bw}, ${bh}, ${JSON.stringify(box)});
+					const key = 'b' + __built.size;
+					__built.set(key, r.c);
+					return key;
+				})()`);
+				const x = vec.x - box.pad;
+				const y = vec.y - box.pad;
+				const sx = box.width / bw, sy = box.height / bh;
+				// A crop becomes a vector mask: cutting the bitmap would leave
+				// pixels the spec no longer describes.
+				let mask;
+				if (l.clip) {
+					const c0 = { x: Math.max(x, l.clip.x), y: Math.max(y, l.clip.y), x1: Math.min(x + box.width, l.clip.x + l.clip.w), y1: Math.min(y + box.height, l.clip.y + l.clip.h) };
+					if (c0.x1 <= c0.x || c0.y1 <= c0.y) {
+						await chrome.evaluate(`__built.delete(${JSON.stringify(vr)}); true`);
+						continue;
+					}
+					const inside = c0.x <= x && c0.y <= y && c0.x1 >= x + box.width && c0.y1 >= y + box.height;
+					if (!inside) {
+						const L = (px, py) => ({ x: (px - x) / sx, y: (py - y) / sy });
+						mask = { fillRule: 'nonzero', paths: [{ closed: true, nodes: [L(c0.x, c0.y), L(c0.x1, c0.y), L(c0.x1, c0.y1), L(c0.x, c0.y1)] }] };
+					}
+				}
+				if (!l.bleed && !l.rotation) {
+					const x1 = mask ? Math.min(x + box.width, l.clip.x + l.clip.w) : x + box.width;
+					const y1 = mask ? Math.min(y + box.height, l.clip.y + l.clip.h) : y + box.height;
+					const off = [x < -k && 'left', y < -k && 'top', x1 > width + k && 'right', y1 > height + k && 'bottom'].filter(Boolean);
+					if (off.length) {
+						if (off.length === 1 && off[0] === 'bottom') below.push(y1);
+						else overflow.push(`${l.name ?? l.type} runs off the ${off.join('/')} (${[x, y, x1, y1].map((v) => Math.round(v / k)).join(',')} on ${page.width}x${page.height})`);
+					}
+				}
+				const png = await chrome.evaluate(`__bcanvas.pngBase64(__built.get(${JSON.stringify(vr)}))`);
+				const imageIndex = images.length;
+				images.push({ bytes: Buffer.from(png, 'base64'), width: bw, height: bh });
+				const layer = {
+					id: layerId(),
+					name: l.name ?? { rect: 'Rectangle', ellipse: 'Ellipse', polygon: 'Polygon', star: 'Star', line: 'Line', path: 'Path' }[l.type],
+					visible: l.visible !== false,
+					locked: l.locked === true,
+					opacity: l.opacity ?? 1,
+					blendMode: l.blendMode ?? 'normal',
+					transform: { x, y, scaleX: sx, scaleY: sy, rotation: ((l.rotation ?? 0) * Math.PI) / 180 },
+					width: bw,
+					height: bh,
+					image: imageIndex,
+					vector: vec.spec
+				};
+				if (l.name) layer.renamed = true;
+				if (mask) layer.mask = mask;
+				if (l.__group) layer.groupId = l.__group;
+				if (l.clipBelow) layer.clip = true;
+				if (l.shadow) {
+					layer.effects = {
+						dropShadow: { enabled: true, color: l.shadow.color ?? '#000000', opacity: l.shadow.opacity ?? 0.25, blur: l.shadow.blur, distance: l.shadow.distance, angle: l.shadow.angle ?? 90 }
+					};
+				}
+				layers.push(layer);
+				builtForComposite.push({ key: vr, ...layer });
+				continue;
+			}
 			const r = await chrome.evaluate(`(async () => {
 				const l = ${JSON.stringify(l)};
 				const r = await __bcanvas.rasterLayer(l, __pages);
@@ -613,6 +843,8 @@ try {
 			};
 			// A text layer's name follows its content unless it was chosen by hand.
 			if (l.type === 'text' && l.name) layer.renamed = true;
+			if (l.__group) layer.groupId = l.__group;
+			if (l.clipBelow) layer.clip = true;
 			if (l.type === 'text') {
 				layer.text = {
 					content: String(l.text),
@@ -642,7 +874,7 @@ try {
 
 		const composite = await chrome.evaluate(`(() => {
 			const built = ${JSON.stringify(builtForComposite)}.map((b) => ({ ...b, canvas: __built.get(b.key) }));
-			const c = __bcanvas.compositePage(${JSON.stringify({ width, height, background: page.background ?? null })}, built);
+			const c = __bcanvas.compositePage(${JSON.stringify({ width, height, background: page.background ?? null })}, built, ${JSON.stringify(page.__groups)});
 			__pages.set(${JSON.stringify(page.name)}, c);
 			return ${pngDir ? '__bcanvas.pngBase64(c)' : 'null'};
 		})()`);
@@ -662,7 +894,9 @@ try {
 			background: page.background ?? null,
 			selectedLayerId: null,
 			selectedLayerIds: [],
-			layers
+			layers,
+			// Absent when there are none, as the app writes it.
+			...(page.__groups.length ? { groups: page.__groups } : {})
 		});
 		process.stdout.write(`  page ${manifestPages.length}/${scene.pages.length}: ${page.name} (${layers.length} layers)\n`);
 		if (below.length) overflow.push(`${below.length} layer(s) continue past the bottom, down to y=${Math.round(Math.max(...below) / k)} of ${page.height} — page too short, or a deliberate fold?`);

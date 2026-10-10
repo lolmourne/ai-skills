@@ -5,7 +5,7 @@ Each folder is one self-contained skill.
 
 | Skill | What it does |
 |---|---|
-| [`bytecanvas`](bytecanvas/) | Turns an app's design code into ByteCanvas (`.bcanvas`) design guidelines, UI kits and mock screens, with editable layers and PNG exports. |
+| [`bytecanvas`](bytecanvas/) | Turns an app's design code — or a brand brief — into ByteCanvas (`.bcanvas`) design guidelines, brand books, logos, UI kits and mock screens, with editable vector layers, named component groups and PNG exports. |
 
 ## Install
 

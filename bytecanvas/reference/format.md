@@ -56,7 +56,8 @@ is how a page is being looked at, not part of it.
   "background": "#F7F8FA" | null, // page colour; null = transparent
   "selectedLayerId": null,
   "selectedLayerIds": [],
-  "layers": [ManifestLayer, ...]  // index 0 = BOTTOM of the stack
+  "layers": [ManifestLayer, ...], // index 0 = BOTTOM of the stack
+  "groups": [LayerGroup, ...]     // optional; absent when the page has none
 }
 ```
 
@@ -81,16 +82,67 @@ is how a page is being looked at, not part of it.
   "renamed": true,                // text layer whose name was set by hand
   "effects": { "dropShadow": {...}, "colorOverlay": {...}, "gradientOverlay": {...}, "stroke": {...} },
   "diagram": DiagramSpec,         // diagram-mode shape
-  "connector": ConnectorSpec      // diagram-mode line
+  "connector": ConnectorSpec,     // diagram-mode line
+  "vector": VectorSpec,           // a vector layer: shape or paths, fill and stroke
+  "groupId": "group_1_ab12cd",    // the group it sits in
+  "clip": true,                   // clipped to the layer below (a clipping mask)
+  "mask": VectorMask              // shown only inside these paths
 }
 ```
 
 **Pixels are the source of truth on open** — for the screen, image export and
-the flattened PDF. `text`/`diagram` specs are used to re-render when the user
-edits the layer, **and by the editable PDF export**, which writes text layers
-as real text, diagram shapes and connectors as vector paths, all from their
-specs rather than their pixels. A spec that disagrees with its pixels shows up
+the flattened PDF. `text`/`diagram`/`vector` specs are used to re-render when
+the user edits the layer, **and by the editable PDF and SVG exports**, which
+write text layers as real text and diagram shapes, connectors and vectors as
+paths, all from their specs rather than their pixels. A spec that disagrees with its pixels shows up
 there, so keep them consistent (`build.mjs` does).
+
+### Vector layers
+
+```jsonc
+"vector": {
+  "width": 120, "height": 80,               // geometry box, document px, origin at its top-left
+  "paths": [],                              // used when there is no `shape`
+  "shape": { "kind": "rect", "radii": [20, 0, 20, 0] },   // or ellipse | polygon {sides} | star {points, inner}
+  "fill": "#F5A623",  "stroke": "#1A1A1A",  // null for none
+  "strokeWidth": 4, "strokeAlign": "inside",// center | inside | outside
+  "lineCap": "butt", "lineJoin": "miter", "miterLimit": 4,
+  "dash": [], "fillRule": "nonzero"
+}
+// a path: { "closed": true, "nodes": [{ "x": 0, "y": 0, "out": {x,y} }, { "x": 10, "y": 0, "in": {x,y}, "mode": "smooth" }] }
+// handles are absolute points; a segment with no handle at either end is straight
+```
+
+The bitmap covers the geometry box plus the stroke's reach on every side —
+`pad = 0` for no stroke or an inside one; otherwise `ceil(reach * 100) / 100 + 0.5`,
+where reach is half the width (centre) or the width (outside), times √2 for
+square caps, or the sharpest mitre ratio the path has for mitred joins
+(corners past `miterLimit` are bevelled and do not count). It is drawn at 2x,
+and `scaleX/Y = (box + 2·pad) / bitmap`, so `transform.x/y` is the geometry's
+top-left minus `pad`. `scripts/vector.mjs` and `build.mjs` reproduce this
+exactly; a spec whose padding disagrees makes the shape jump on its first edit.
+On open every node is checked and one with a non-numeric coordinate dropped.
+
+### Groups, clipping and masks
+
+```jsonc
+"groups": [{ "id": "group_1_ab12cd", "name": "Button / Primary", "parentId": null,
+             "visible": true, "opacity": 1, "collapsed": false }]
+```
+
+A group is metadata beside the flat stack: its layers name it in `groupId`,
+a subgroup names its parent. A group's layers must **sit together** in the
+stack (subgroups together inside it); a file that splits one is regrouped on
+open, which reorders the stack, and an empty group is dropped. A hidden group
+hides its layers; its opacity fades it as one picture.
+
+`clip: true` clips a layer to the nearest unclipped layer — or group — below
+it in the same group. `mask` is a vector mask in the layer's **local pixel**
+space (`0..width × 0..height` of its bitmap):
+
+```jsonc
+"mask": { "fillRule": "nonzero", "paths": [{ "closed": true, "nodes": [...] }] }
+```
 
 ### Text layers
 

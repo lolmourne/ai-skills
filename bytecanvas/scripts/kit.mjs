@@ -18,6 +18,28 @@ export const svg = (src, x, y, w, h, o = {}) => ({ type: 'svg', ...(src.trim().s
 export const line = (x1, y1, x2, y2, o = {}) => ({ type: 'line', x1, y1, x2, y2, ...o });
 export const pageRef = (page, x, y, w, h, o = {}) => ({ type: 'page', page, x, y, w, h, ...o });
 
+// Vector shapes — editable in ByteCanvas as live shapes and paths, sharp at any
+// size, and written as real paths by its SVG and editable-PDF exports.
+export const polygon = (x, y, w, h, sides = 6, o = {}) => ({ type: 'polygon', x, y, w, h, sides, ...o });
+export const star = (x, y, w, h, points = 5, inner = 0.5, o = {}) => ({ type: 'star', x, y, w, h, points, inner, ...o });
+/** SVG path data (`d`), drawn at `scale` with its origin at (x, y) — paste a logo's path straight in. */
+export const path = (d, x = 0, y = 0, o = {}) => ({ type: 'path', d, x, y, ...o });
+
+/**
+ * A group: one row in ByteCanvas's layer panel, picked up whole by a click on
+ * the canvas, faded as one picture. Use one per component, so a UI kit opens
+ * as named, foldable components instead of a heap of rectangles.
+ */
+export const group = (name, layers, o = {}) => ({ type: 'group', name, layers: layers.flat(), ...o });
+
+/**
+ * Clip `layers` to `base`, as Photoshop's clipping mask: a photo shown only
+ * inside a circle, a pattern only inside a letter. Returns base + layers.
+ */
+export function clipped(base, layers) {
+	return [base, ...layers.flat().map((l) => ({ ...l, clipBelow: true }))];
+}
+
 /** Flutter `Color(0xAARRGGBB)` / `withValues(alpha:)` → `#RRGGBBAA`. */
 export function alpha(hex, a) {
 	const h = hex.replace('#', '').slice(0, 6);
@@ -346,9 +368,17 @@ const YS = ['y', 'y1', 'y2'];
  * sheet at 2x, or alone on an asset page. Shadows, radii, dashes and type all
  * scale with it.
  */
-export function place(layers, { x = 0, y = 0, scale = 1, prefix, clip } = {}) {
-	return layers.flat().map((l) => {
+export function place(layers, { x = 0, y = 0, scale = 1, prefix, clip, group: groupName } = {}) {
+	const placed = layers.flat().map((l) => {
+		// A group moves as its contents do; its name takes the prefix.
+		if (l.type === 'group') {
+			const g = { ...l, layers: place(l.layers, { x, y, scale, prefix, clip }) };
+			if (prefix && g.name) g.name = `${prefix}/${g.name}`;
+			return g;
+		}
 		const o = structuredClone(l);
+		// A path's own scale carries the placement's, its x/y the offset.
+		if (o.type === 'path') o.scale = (o.scale ?? 1) * scale;
 		// A clip given here is in the layers' own coordinates, like everything else.
 		if (clip && !o.clip) o.clip = { ...clip };
 		for (const key of GEOM) if (typeof o[key] === 'number') o[key] *= scale;
@@ -362,4 +392,6 @@ export function place(layers, { x = 0, y = 0, scale = 1, prefix, clip } = {}) {
 		if (prefix && o.name) o.name = `${prefix}/${o.name}`;
 		return o;
 	});
+	// `group: 'Button / Primary'` wraps the placed component in a named group.
+	return groupName ? [group(groupName, placed)] : placed;
 }

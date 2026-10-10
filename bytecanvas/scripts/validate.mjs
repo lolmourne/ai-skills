@@ -59,11 +59,37 @@ manifest.pages.forEach((p, pi) => {
 		for (const k of ['x', 'y', 'scaleX', 'scaleY', 'rotation']) {
 			if (!Number.isFinite(l.transform?.[k])) fail(`layer "${l.name}" transform.${k} is not a number`);
 		}
+		if (l.vector) {
+			const v = l.vector;
+			if (!Number.isFinite(v.width) || !Number.isFinite(v.height)) fail(`layer "${l.name}" vector has no size`);
+			const bad = (v.paths ?? []).some((p) => p.nodes.some((n) => ![n.x, n.y, n.in?.x ?? 0, n.in?.y ?? 0, n.out?.x ?? 0, n.out?.y ?? 0].every(Number.isFinite)));
+			// The app drops a node with a bad number on open, silently changing the shape.
+			if (bad) fail(`layer "${l.name}" vector has a point that is not a number`);
+			if (!v.shape && !(v.paths ?? []).length) fail(`layer "${l.name}" vector has neither a shape nor paths`);
+		}
+	}
+	// Groups: every reference resolves, and each group's layers sit together —
+	// the app regroups a split group on open, which reorders the stack.
+	const groups = new Map((p.groups ?? []).map((g) => [g.id, g]));
+	for (const l of p.layers) if (l.groupId && !groups.has(l.groupId)) fail(`layer "${l.name}" names a missing group`);
+	for (const g of groups.values()) if (g.parentId && !groups.has(g.parentId)) fail(`group "${g.name}" names a missing parent`);
+	const inside = (l, gid) => {
+		for (let id = l.groupId, n = 0; id && n < 64; id = groups.get(id)?.parentId, n++) if (id === gid) return true;
+		return false;
+	};
+	for (const g of groups.values()) {
+		const at = p.layers.map((l, i) => (inside(l, g.id) ? i : -1)).filter((i) => i >= 0);
+		if (!at.length) fail(`group "${g.name}" has no layers (the app drops it)`);
+		else if (at[at.length - 1] - at[0] + 1 !== at.length) fail(`group "${g.name}" is split by layers outside it`);
 	}
 });
 
 console.log(`${file}: ${manifest.pages.length} pages, ${layerCount} layers, ${manifest.images.length} images, ${(buf.length / 1048576).toFixed(2)} MB`);
-for (const p of manifest.pages) console.log(`  - ${p.name} (${p.width}x${p.height}, ${p.layers.length} layers)`);
+for (const p of manifest.pages) {
+	const vectors = p.layers.filter((l) => l.vector).length;
+	const extra = [vectors && `${vectors} vector`, p.groups?.length && `${p.groups.length} group${p.groups.length === 1 ? '' : 's'}`].filter(Boolean).join(', ');
+	console.log(`  - ${p.name} (${p.width}x${p.height}, ${p.layers.length} layers${extra ? `; ${extra}` : ''})`);
+}
 
 // The app's own reader, when its source is on this machine.
 const repo = [repoArg, process.env.BYTECANVAS_REPO, join(homedir(), 'Documents/projects/js/bytecanvas')]
