@@ -112,6 +112,7 @@ ByteCanvas now has what a brand book needs: vector shapes, a pen and point edito
 - **One group per lockup** (primary, stacked, icon only, mono, reversed), each also on an `assetPage` sized to it with `background: null`, so it exports as a transparent PNG.
 - **Brand sheets** from the kit: `colorsPage` (with the scene's `cmyk` map when the brand book has print values), `typographyPage`, plus custom `sheet`s for clear space (draw the clearance as `rect`s with `dash`), minimum size, and do's & don'ts (a `group` per example, a red `line` cross through the don'ts).
 - Tell the user what to do in the app afterwards: **Layer › Convert to Outlines** (`Cmd+Shift+O`) for wordmarks that must not depend on the font, **Export › SVG** (whole page or "Selected layers only") or **PDF › Editable** to hand the vectors on, and **Combine Shapes** to merge a symbol into one path.
+- The app also has brand tools that a scene should not imitate — point the user at them with the logo selected: **Brand › Construction Grid** (golden ratio, icon keylines, square grid, as an editable group for the construction page), **Brand › Mockup** (business card, app icon, T-shirt, signage pages with the logo fitted), **Brand › Export Pack…** (one ZIP: SVG, PNG 1x/2x/3x, favicon set with `.ico`, iOS `AppIcon.appiconset`, Android launcher icons, social avatars), the **Shape Builder** (`Shift+M`) for building a mark from overlapping shapes, and **Layer › Put Text on Path** for badge-style lettering round a circle.
 
 ## Printed documents (SOPs, manuals, A4)
 
