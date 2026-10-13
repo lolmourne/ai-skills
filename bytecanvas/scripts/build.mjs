@@ -561,7 +561,8 @@ function pageRuntime() {
 			g.drawImage(b.canvas, 0, 0, b.width, b.height);
 			g.restore();
 		};
-		const blend = (m) => ({ normal: 'source-over' })[m] ?? m;
+		// Canvas names every mode as ByteCanvas does, but normal and Add.
+		const blend = (m) => ({ normal: 'source-over', 'linear-dodge': 'lighter' })[m] ?? m;
 		const shown = (n) => (n.group ? n.group.visible && n.group.opacity > 0 : n.layer.visible !== false && n.layer.opacity > 0);
 		const draw = (g, nodes) => {
 			for (const n of nodes) {

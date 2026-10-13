@@ -69,7 +69,9 @@ is how a page is being looked at, not part of it.
   "name": "icon/home",
   "visible": true, "locked": false,
   "opacity": 1,                   // 0..1
-  "blendMode": "normal",          // normal|multiply|screen|overlay|darken|lighten
+  "blendMode": "normal",          // normal|multiply|screen|overlay|darken|lighten|soft-light|
+                                  // hard-light|color-dodge|color-burn|linear-dodge (Add)|
+                                  // difference|exclusion|hue|saturation|color|luminosity
   "transform": {
     "x": 48, "y": 120,            // document position of the layer's unrotated top-left
     "scaleX": 0.5, "scaleY": 0.5, // drawn size = width*scaleX × height*scaleY
@@ -86,7 +88,10 @@ is how a page is being looked at, not part of it.
   "vector": VectorSpec,           // a vector layer: shape or paths, fill and stroke
   "groupId": "group_1_ab12cd",    // the group it sits in
   "clip": true,                   // clipped to the layer below (a clipping mask)
-  "mask": VectorMask              // shown only inside these paths
+  "mask": VectorMask,             // shown only inside these paths
+  "lockAlpha": true,              // lock transparency: painting only touches existing pixels
+  "pixelMask": 4                  // index into images: a paintable layer mask, the same size
+                                  // as the layer's image; its alpha is where the layer shows
 }
 ```
 
