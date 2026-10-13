@@ -392,7 +392,8 @@ function pageRuntime() {
 				// Keep a photo's own resolution when it is larger than its box,
 				// so zooming in ByteCanvas — or exporting at the page size —
 				// does not reveal a downsampled copy. SVGs render at 2x.
-				const density = l.type === 'svg' ? SUPERSAMPLE : Math.max(1, Math.min(4, Math.min(iw / w, ih / h)));
+				// `density` overrides it: a soft gradient or a texture needs no more than the page's pixels.
+				const density = l.density ?? (l.type === 'svg' ? SUPERSAMPLE : Math.max(1, Math.min(4, Math.min(iw / w, ih / h))));
 				const cw = w * density, ch = h * density;
 				const c = canvas(cw, ch);
 				const ctx = c.getContext('2d');

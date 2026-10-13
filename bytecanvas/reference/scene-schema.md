@@ -84,7 +84,7 @@ Colours are `#RGB`, `#RRGGBB` or `#RRGGBBAA` (`kit.alpha(hex, a)` for
 | `text` | `text` (`\n` for lines — no wrapping), `x y` = top-left of the first line box, `font`, `size`, `weight`, `italic`, `color`, `align`, `lineHeight`, `letterSpacing`, `underline`, `strike`; optional `width` + `align: center/right` aligns the block inside `[x, x+width]` |
 | `icon` | `icon` (Material Icons ligature name, e.g. `local_laundry_service`), `x y` top-left, `size`, `color`, `style` |
 | `image` | `src` (file path, data URL or https), `x y w h`, `fit` (`cover` default, `contain`, `fill`), `radius`, `tint` (recolour all opaque pixels) |
-| `svg` | `src` or `markup` (inline SVG string), `x y w h`, `fit` (`contain` default), `tint` |
+| `svg` | `src` or `markup` (inline SVG string), `x y w h`, `fit` (`contain` default), `tint`, `density` (pixels per page pixel, default 2 — use 1 for textures, 0.5 for soft gradients to keep files small) |
 | `page` | `page` (name of an EARLIER page), `x y w h`, `radius` — a thumbnail of that page's composite |
 
 `gradient`: `{ "type": "linear", "angle": 135, "stops": [["#062A44", 0], ["#0A3D62", 1]] }`
