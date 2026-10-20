@@ -16,6 +16,7 @@ import { launch } from './chrome.mjs';
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { VECTOR_TYPES, layerSpec, specPaths, vectorBox } from './vector.mjs';
+import { ANCHOR_IDS, anchorsFor, arrowHead, labelPositionFor, pathBounds, pointAtT, pointsToPath, routePoints, shapeDef, SHAPE_LIBRARY } from './diagram-lib.mjs';
 
 // ---- args ------------------------------------------------------------------
 
@@ -560,6 +561,11 @@ function pageRuntime() {
 				g.shadowOffsetY = Math.sin(rad) * s.distance;
 			}
 			g.drawImage(b.canvas, 0, 0, b.width, b.height);
+			// A diagram shape's words are drawn over it by the app, not baked in.
+			if (b.label) {
+				g.shadowColor = 'transparent';
+				drawLabel(g, b.label);
+			}
 			g.restore();
 		};
 		// Canvas names every mode as ByteCanvas does, but normal and Add.
@@ -606,7 +612,201 @@ function pageRuntime() {
 		return { c: out, dx: lx0 * scale, dy: ly0 * scale };
 	}
 
-	window.__bcanvas = { loadFonts, rasterLayer, rasterVector, compositePage, pngBase64, canvas, cropTo };
+	// ---- diagram shapes and connectors --------------------------------------
+	// Ported from ByteCanvas's canvas/diagram-raster.ts and text/frames.ts. The
+	// geometry (outlines, routes, arrowheads) arrives already worked out by the
+	// app's own diagram library on the Node side; this is only the canvas half.
+
+	function trace(ctx, cmds) {
+		ctx.beginPath();
+		for (const c of cmds) {
+			if (c[0] === 'M') ctx.moveTo(c[1], c[2]);
+			else if (c[0] === 'L') ctx.lineTo(c[1], c[2]);
+			else if (c[0] === 'C') ctx.bezierCurveTo(c[1], c[2], c[3], c[4], c[5], c[6]);
+			else ctx.closePath();
+		}
+	}
+
+	function applyLineStyle(ctx, style, width) {
+		if (style === 'dashed') {
+			ctx.lineCap = 'butt';
+			ctx.setLineDash([Math.max(5, width * 3), Math.max(4, width * 2.5)]);
+		} else if (style === 'dotted') {
+			ctx.lineCap = 'round';
+			ctx.setLineDash([0.001, Math.max(4, width * 2)]);
+		} else ctx.setLineDash([]);
+	}
+
+	/**
+	 * A diagram label laid out as the app's `layoutText` does for one style:
+	 * greedy word wrap to `maxWidth` (null = never wrap), a word too long for a
+	 * line split by characters, each line box `size * lineHeight` tall with the
+	 * font's own ascent/descent centred in it.
+	 */
+	function labelLayout(text, style, maxWidth, align, lineHeight) {
+		const font = `${style.weight} ${style.size}px "${style.family}", system-ui, sans-serif`;
+		const m = canvas(1, 1).getContext('2d');
+		m.font = font;
+		const width = (s) => m.measureText(s).width;
+		const rows = [];
+		for (const para of String(text).split('\n')) {
+			if (maxWidth === null) { rows.push(para); continue; }
+			let line = '';
+			for (const token of para.split(/(\s+)/).filter((t) => t !== '')) {
+				if (/^\s+$/.test(token)) { line += token; continue; }
+				if (line.trim() && width(line + token) > maxWidth) { rows.push(line.trimEnd()); line = ''; }
+				if (!line.trim() && width(token) > maxWidth) {
+					let part = '';
+					for (const ch of token) {
+						if (part && width(part + ch) > maxWidth) { rows.push(part); part = ''; }
+						part += ch;
+					}
+					line = part;
+					continue;
+				}
+				line += token;
+			}
+			rows.push(line.trimEnd());
+		}
+		const mt = m.measureText('Hg');
+		const ascent = Number.isFinite(mt.fontBoundingBoxAscent) ? mt.fontBoundingBoxAscent : style.size * 0.8;
+		const descent = Number.isFinite(mt.fontBoundingBoxDescent) ? mt.fontBoundingBoxDescent : style.size * 0.2;
+		const lh = style.size * lineHeight;
+		const lines = rows.map((t, i) => ({ text: t, width: width(t), baseline: i * lh + (lh - (ascent + descent)) / 2 + ascent }));
+		const boxWidth = maxWidth ?? Math.max(0, ...lines.map((l) => l.width));
+		for (const l of lines) {
+			const room = boxWidth - l.width;
+			l.x = align === 'center' ? room / 2 : align === 'right' ? room : 0;
+		}
+		return { font, color: style.color, lines, boxWidth, height: lines.length * lh };
+	}
+
+	function drawLabel(ctx, label) {
+		ctx.save();
+		const [a, b, c, d, e, f] = label.matrix;
+		ctx.transform(a, b, c, d, e, f);
+		ctx.font = label.layout.font;
+		ctx.fillStyle = label.layout.color;
+		ctx.textBaseline = 'alphabetic';
+		ctx.textAlign = 'left';
+		for (const l of label.layout.lines) ctx.fillText(l.text, l.x, l.baseline);
+		ctx.restore();
+	}
+
+	/**
+	 * A shape's label in its layer's local space — `shapeLabelPlacement`:
+	 * outside (below/above) centred in a box 1.8x the shape's width; inside,
+	 * wrapped to the label box less 10px each side and centred vertically, or
+	 * turned to run up a narrow tall band (a swimlane's header).
+	 */
+	function shapeLabel(spec, w, h, labelBox) {
+		if (!spec.label) return null;
+		const style = { family: spec.fontFamily, size: spec.fontSize, weight: spec.fontWeight ?? 500, color: spec.labelColor };
+		const lh = spec.lineHeight ?? 1.25;
+		const align = spec.labelAlign ?? 'center';
+		const position = spec.labelPosition ?? 'inside';
+		if (position !== 'inside') {
+			const maxWidth = Math.max(w * 1.8, 120);
+			const layout = labelLayout(spec.label, style, maxWidth, align, lh);
+			const y = position === 'below' ? h + 6 : -6 - layout.height;
+			return { layout, matrix: [1, 0, 0, 1, w / 2 - maxWidth / 2, y] };
+		}
+		const box = labelBox ?? { x: 0, y: 0, width: w, height: h };
+		if (box.height > box.width * 1.6 && box.width < 60) {
+			const maxWidth = Math.max(10, box.height - 12);
+			const layout = labelLayout(spec.label, style, maxWidth, align, lh);
+			// translate(centre) · rotate(-90°) · translate(-maxWidth/2, -height/2)
+			const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+			return { layout, matrix: [0, -1, 1, 0, cx - layout.height / 2, cy + maxWidth / 2] };
+		}
+		const maxWidth = Math.max(10, box.width - 20);
+		const layout = labelLayout(spec.label, style, maxWidth, align, lh);
+		return { layout, matrix: [1, 0, 0, 1, box.x + 10, box.y + (box.height - layout.height) / 2] };
+	}
+
+	/** `rasteriseDiagramShape`: the outline inset by half the stroke, at 1x. Label not baked in. */
+	function rasterDiagram(spec, w, h, geo, labelBox) {
+		const c = canvas(w, h);
+		const ctx = c.getContext('2d');
+		const inset = spec.strokeWidth / 2;
+		ctx.translate(inset, inset);
+		ctx.fillStyle = spec.fill;
+		trace(ctx, geo.outline);
+		ctx.fill();
+		const style = spec.lineStyle ?? 'solid';
+		if (spec.strokeWidth > 0 && style !== 'none') {
+			ctx.strokeStyle = spec.stroke;
+			ctx.lineWidth = spec.strokeWidth;
+			ctx.lineJoin = 'round';
+			applyLineStyle(ctx, style, spec.strokeWidth);
+			trace(ctx, geo.outline);
+			ctx.stroke();
+			ctx.setLineDash([]);
+			ctx.lineCap = 'butt';
+			if (geo.detail?.length) {
+				ctx.lineWidth = Math.max(1, spec.strokeWidth * 0.75);
+				trace(ctx, geo.detail);
+				ctx.stroke();
+			}
+		}
+		return { c, label: shapeLabel(spec, w, h, labelBox) };
+	}
+
+	/**
+	 * `rasteriseConnector`: a bitmap only as big as the route, its arrowheads
+	 * and its label, plus a pad; the label sits just beside the line (above a
+	 * horizontal run, right of a vertical one) unless given an offset.
+	 */
+	function rasterConnector(spec, r) {
+		let words = null;
+		let label = null;
+		if (spec.label) {
+			const style = { family: spec.fontFamily, size: spec.fontSize ?? 12, weight: spec.fontWeight ?? 500, color: spec.labelColor ?? spec.stroke };
+			const layout = labelLayout(spec.label, style, null, 'center', 1.25);
+			const { point, dx, dy } = r.at;
+			const off = spec.labelOffset ?? 0;
+			const gap = 4 + spec.strokeWidth / 2;
+			const centre = off !== 0
+				? { x: point.x - dy * off, y: point.y + dx * off }
+				: Math.abs(dx) >= Math.abs(dy)
+					? { x: point.x, y: point.y - layout.height / 2 - gap }
+					: { x: point.x + layout.boxWidth / 2 + gap, y: point.y };
+			label = { layout, matrix: [1, 0, 0, 1, centre.x - layout.boxWidth / 2, centre.y - layout.height / 2] };
+			words = { x: label.matrix[4] - 2, y: label.matrix[5] - 2, width: layout.boxWidth + 4, height: layout.height + 4 };
+		}
+		const rb = r.bounds;
+		const b = words
+			? (() => {
+					const x = Math.min(rb.x, words.x), y = Math.min(rb.y, words.y);
+					return { x, y, width: Math.max(rb.x + rb.width, words.x + words.width) - x, height: Math.max(rb.y + rb.height, words.y + words.height) - y };
+				})()
+			: rb;
+		const head = spec.arrow === 'none' ? 12 : 12 + spec.strokeWidth * 2;
+		const pad = Math.ceil(spec.strokeWidth + head + 4);
+		const w = Math.max(1, Math.ceil(b.width) + pad * 2);
+		const h = Math.max(1, Math.ceil(b.height) + pad * 2);
+		const c = canvas(w, h);
+		const ctx = c.getContext('2d');
+		ctx.translate(pad - b.x, pad - b.y);
+		ctx.strokeStyle = spec.stroke;
+		ctx.fillStyle = spec.stroke;
+		ctx.lineWidth = spec.strokeWidth;
+		ctx.lineCap = 'round';
+		ctx.lineJoin = 'round';
+		applyLineStyle(ctx, spec.lineStyle && spec.lineStyle !== 'none' ? spec.lineStyle : spec.dashed ? 'dashed' : 'solid', spec.strokeWidth);
+		trace(ctx, r.line);
+		ctx.stroke();
+		ctx.setLineDash([]);
+		for (const head of r.heads) {
+			if (!head.length) continue;
+			trace(ctx, head);
+			ctx.fill();
+		}
+		if (label) drawLabel(ctx, label);
+		return { c, x: b.x - pad, y: b.y - pad };
+	}
+
+	window.__bcanvas = { loadFonts, rasterLayer, rasterVector, rasterDiagram, rasterConnector, drawLabel, compositePage, pngBase64, canvas, cropTo };
 }
 
 // ---- unit handling ----------------------------------------------------------
@@ -623,7 +823,7 @@ function runStyle(l) {
 	return style;
 }
 
-const GEOM = ['x', 'y', 'w', 'h', 'x1', 'y1', 'x2', 'y2', 'size', 'strokeWidth', 'letterSpacing', 'maxWidth', 'width'];
+const GEOM = ['x', 'y', 'w', 'h', 'x1', 'y1', 'x2', 'y2', 'size', 'strokeWidth', 'letterSpacing', 'maxWidth', 'width', 'fontSize', 'labelOffset'];
 
 function scaleLayer(l, k) {
 	const o = structuredClone(l);
@@ -634,6 +834,9 @@ function scaleLayer(l, k) {
 	if (o.clip) o.clip = { x: o.clip.x * k, y: o.clip.y * k, w: o.clip.w * k, h: o.clip.h * k };
 	// Path data is in its own units; its `scale` takes the page's along.
 	if (o.type === 'path') o.scale = (o.scale ?? 1) * k;
+	// A connector's turns and loose ends are page points like any other.
+	if (Array.isArray(o.bends)) o.bends = o.bends.map((p) => ({ x: p.x * k, y: p.y * k }));
+	for (const end of ['from', 'to']) if (o.type === 'connector' && typeof o[end]?.x === 'number') o[end] = { ...o[end], x: o[end].x * k, y: o[end].y * k };
 	if (o.shadow) o.shadow = { ...o.shadow, blur: (o.shadow.blur ?? 8) * k, distance: (o.shadow.distance ?? 4) * k };
 	return o;
 }
@@ -653,7 +856,117 @@ function withDefaults(l, scene) {
 		};
 	}
 	if (l.type === 'icon') return { style: d.iconStyle ?? 'filled', size: 24, ...l };
+	if (l.type === 'diagram') {
+		const def = shapeDef(l.shape);
+		if (!def) throw new Error(`diagram "${l.label ?? l.id ?? '?'}": unknown shape "${l.shape}" — one of: ${SHAPE_LIBRARY.map((s) => s.id).join(', ')}`);
+		const dd = d.diagram ?? {};
+		const labelPosition = l.labelPosition ?? labelPositionFor(l.shape);
+		return {
+			w: def.defaultWidth,
+			h: def.defaultHeight,
+			label: '',
+			// A device frame is a dark case whatever the sheet's colours are,
+			// unless the scene's defaults say otherwise — the app's own rule.
+			fill: dd.fill ?? def.defaultFill ?? DIAGRAM_DEFAULTS.fill,
+			stroke: dd.stroke ?? def.defaultStroke ?? DIAGRAM_DEFAULTS.stroke,
+			strokeWidth: dd.strokeWidth ?? DIAGRAM_DEFAULTS.strokeWidth,
+			labelColor: labelPosition === 'inside' ? dd.labelColor ?? DIAGRAM_DEFAULTS.labelColor : dd.outsideLabelColor ?? dd.labelColor ?? DIAGRAM_DEFAULTS.outsideLabelColor,
+			fontSize: dd.fontSize ?? DIAGRAM_DEFAULTS.fontSize,
+			font: dd.font ?? d.font ?? 'Roboto',
+			weight: dd.weight ?? 500,
+			lineHeight: dd.lineHeight ?? 1.25,
+			...l,
+			labelPosition
+		};
+	}
+	if (l.type === 'connector') {
+		const dc = d.connector ?? {};
+		return { ...CONNECTOR_DEFAULTS, font: d.font ?? 'Roboto', weight: 500, ...dc, ...l };
+	}
 	return l;
+}
+
+// Diagram colours for a light page. The app's own tool defaults are tuned
+// for its dark, transparent editing canvas (pale lines, pale captions), which
+// vanish on a white sheet; a scene overrides these in `defaults.diagram` /
+// `defaults.connector` or per layer.
+const DIAGRAM_DEFAULTS = { fill: '#EEF2FF', stroke: '#4338CA', strokeWidth: 2, labelColor: '#1E1B4B', outsideLabelColor: '#1E293B', fontSize: 14 };
+const CONNECTOR_DEFAULTS = { style: 'orthogonal', arrow: 'end', stroke: '#64748B', strokeWidth: 2, labelColor: '#334155', fontSize: 12, corner: 'sharp', lineStyle: 'solid', labelT: 0.5 };
+
+/** A diagram layer's spec, as the app stores it. */
+function diagramSpec(l) {
+	const spec = {
+		shapeId: l.shape,
+		label: String(l.label ?? ''),
+		fill: l.fill,
+		stroke: l.stroke,
+		strokeWidth: l.strokeWidth,
+		labelColor: l.labelColor,
+		fontSize: l.fontSize,
+		labelPosition: l.labelPosition,
+		fontFamily: l.font,
+		fontWeight: l.weight,
+		lineHeight: l.lineHeight
+	};
+	if (l.labelAlign) spec.labelAlign = l.labelAlign;
+	if (l.lineStyle && l.lineStyle !== 'solid') spec.lineStyle = l.lineStyle;
+	return spec;
+}
+
+/**
+ * Anchor points of a placed shape in document space, rotation included —
+ * `layerAnchors` in the app.
+ */
+function shapeAnchors(s) {
+	const local = anchorsFor(s.shape, s.w, s.h);
+	const cos = Math.cos(s.rotation), sin = Math.sin(s.rotation);
+	const out = {};
+	for (const [id, p] of Object.entries(local)) {
+		const dx = p.x - s.w / 2, dy = p.y - s.h / 2;
+		out[id] = { x: s.x + s.w / 2 + dx * cos - dy * sin, y: s.y + s.h / 2 + dx * sin + dy * cos };
+	}
+	return out;
+}
+
+/**
+ * The side of `a` that faces `b`, and the side of `b` that faces `a`: east/west
+ * when they sit more side by side than above one another, else south/north.
+ */
+function facingAnchors(a, b) {
+	const dx = (b.x + b.w / 2 - (a.x + a.w / 2)) / Math.max(1, (a.w + b.w) / 2);
+	const dy = (b.y + b.h / 2 - (a.y + a.h / 2)) / Math.max(1, (a.h + b.h) / 2);
+	if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? ['e', 'w'] : ['w', 'e'];
+	// A name below or above a shape (an actor's, an icon's) sits on that
+	// anchor, so a line must not leave through it: from the side instead —
+	// facing sides when the shapes are well apart sideways, otherwise out and
+	// back in on the same side, round the words.
+	const [upper, lower] = dy >= 0 ? [a, b] : [b, a];
+	if (upper.outside === 'below' || lower.outside === 'above') {
+		if (Math.abs(dx) >= 0.5) return dx >= 0 ? ['e', 'w'] : ['w', 'e'];
+		return dx >= 0 ? ['e', 'e'] : ['w', 'w'];
+	}
+	return dy >= 0 ? ['s', 'n'] : ['n', 's'];
+}
+
+/**
+ * One end of a connector: `'id'`, `'id.anchor'`, `{ shape, anchor }` or a
+ * loose `{ x, y }`. Shapes are found by their scene `id`, else by a unique label.
+ */
+function connectorEnd(ref, shapes, what) {
+	if (ref && typeof ref === 'object' && typeof ref.x === 'number' && !ref.shape) return { shape: null, anchor: null, point: { x: ref.x, y: ref.y } };
+	let key = typeof ref === 'string' ? ref : ref?.shape;
+	let anchor = typeof ref === 'object' ? ref?.anchor ?? null : null;
+	if (typeof ref === 'string' && !shapes.has(ref)) {
+		const dot = ref.lastIndexOf('.');
+		if (dot > 0 && ANCHOR_IDS.includes(ref.slice(dot + 1))) {
+			key = ref.slice(0, dot);
+			anchor = ref.slice(dot + 1);
+		}
+	}
+	const shape = shapes.get(key);
+	if (!shape) throw new Error(`${what}: no diagram shape "${key}" on this page (give the shape an \`id\`)`);
+	if (anchor && !ANCHOR_IDS.includes(anchor)) throw new Error(`${what}: anchor "${anchor}" is not one of ${ANCHOR_IDS.join(' ')}`);
+	return { shape, anchor, point: null };
 }
 
 // ---- ids --------------------------------------------------------------------
@@ -676,6 +989,7 @@ try {
 			const l = withDefaults(raw, scene);
 			if (l.type === 'text') faces.set(`${l.font}|${l.weight}|${l.italic}`, { family: l.font, weight: l.weight, italic: l.italic });
 			if (l.type === 'icon') iconStyles.add(l.style);
+			if ((l.type === 'diagram' || l.type === 'connector') && l.label) faces.set(`${l.font}|${l.weight}|false`, { family: l.font, weight: l.weight, italic: false });
 		}
 	}
 	const missing = await chrome.evaluate(`__bcanvas.loadFonts(${JSON.stringify([...faces.values()])}, ${JSON.stringify([...iconStyles])})`);
@@ -696,8 +1010,150 @@ try {
 		const builtForComposite = [];
 		const overflow = [];
 		const below = []; // bottoms of layers that only run off the bottom: summarised, often a deliberate fold
-		for (const raw of page.layers ?? []) {
-			const l = scaleLayer(withDefaults(raw, scene), k);
+
+		// Diagram shapes are placed before anything is drawn, so a connector can
+		// join shapes that come after it in the stack (lines under boxes).
+		// Sizes are whole pixels and scale is 1, as the app makes them.
+		const shapes = new Map();
+		const labelCount = new Map();
+		const pageLayers = (page.layers ?? []).map((raw) => scaleLayer(withDefaults(raw, scene), k));
+		for (const l of pageLayers) {
+			if (l.type !== 'diagram') continue;
+			const s = {
+				layerId: layerId(),
+				shape: l.shape,
+				label: String(l.label ?? ''),
+				x: Math.round(l.x ?? 0),
+				y: Math.round(l.y ?? 0),
+				w: Math.max(8, Math.round(l.w)),
+				h: Math.max(8, Math.round(l.h)),
+				rotation: ((l.rotation ?? 0) * Math.PI) / 180,
+				outside: l.label && l.labelPosition !== 'inside' ? l.labelPosition : null
+			};
+			l.__shape = s;
+			if (l.id !== undefined) {
+				if (shapes.has(String(l.id))) throw new Error(`page "${page.name}": two diagram shapes with id "${l.id}"`);
+				shapes.set(String(l.id), s);
+			}
+			if (s.label) labelCount.set(s.label, (labelCount.get(s.label) ?? 0) + 1);
+		}
+		for (const l of pageLayers) {
+			const s = l.__shape;
+			if (s?.label && labelCount.get(s.label) === 1 && !shapes.has(s.label)) shapes.set(s.label, s);
+		}
+
+		/** The parts of a layer every type shares. */
+		const baseLayer = (l, id, name, transform, cw, ch, imageIndex) => {
+			const layer = { id, name, visible: l.visible !== false, locked: l.locked === true, opacity: l.opacity ?? 1, blendMode: l.blendMode ?? 'normal', transform, width: cw, height: ch, image: imageIndex };
+			if (l.__group) layer.groupId = l.__group;
+			if (l.clipBelow) layer.clip = true;
+			if (l.shadow) {
+				layer.effects = { dropShadow: { enabled: true, color: l.shadow.color ?? '#000000', opacity: l.shadow.opacity ?? 0.25, blur: l.shadow.blur, distance: l.shadow.distance, angle: l.shadow.angle ?? 90 } };
+			}
+			return layer;
+		};
+		const offPage = (name, x0, y0, x1, y1) => {
+			const off = [x0 < -k && 'left', y0 < -k && 'top', x1 > width + k && 'right', y1 > height + k && 'bottom'].filter(Boolean);
+			if (!off.length) return;
+			if (off.length === 1 && off[0] === 'bottom') below.push(y1);
+			else overflow.push(`${name} runs off the ${off.join('/')} (${[x0, y0, x1, y1].map((v) => Math.round(v / k)).join(',')} on ${page.width}x${page.height})`);
+		};
+
+		for (const l of pageLayers) {
+			if (l.type === 'diagram') {
+				const s = l.__shape;
+				const spec = diagramSpec(l);
+				const def = shapeDef(l.shape);
+				const inset = spec.strokeWidth / 2;
+				const geo = def.geometry(Math.max(1, s.w - inset * 2), Math.max(1, s.h - inset * 2));
+				const labelBox = def.labelBox ? def.labelBox(s.w, s.h) : null;
+				const r = await chrome.evaluate(`(() => {
+					const r = __bcanvas.rasterDiagram(${JSON.stringify(spec)}, ${s.w}, ${s.h}, ${JSON.stringify(geo)}, ${JSON.stringify(labelBox)});
+					const key = 'b' + __built.size;
+					__built.set(key, r.c);
+					return { key, label: r.label, png: __bcanvas.pngBase64(r.c) };
+				})()`);
+				if (!l.bleed && !s.rotation) offPage(l.name ?? (s.label ? `"${s.label}"` : l.shape), s.x, s.y, s.x + s.w, s.y + s.h);
+				if (r.label && spec.labelPosition === 'inside') {
+					const tooWide = r.label.layout.lines.some((ln) => ln.width > r.label.layout.boxWidth + 0.5);
+					const tooTall = r.label.layout.height > (labelBox?.height ?? s.h) + 0.5 && Math.abs(r.label.matrix[1]) < 0.5;
+					if (tooWide || tooTall) overflow.push(`label "${s.label.slice(0, 40)}" does not fit its ${l.shape} (${Math.round(s.w / k)}x${Math.round(s.h / k)}) — make the shape bigger or the label shorter`);
+				}
+				const imageIndex = images.length;
+				images.push({ bytes: Buffer.from(r.png, 'base64'), width: s.w, height: s.h });
+				const layer = baseLayer(l, s.layerId, l.name ?? (s.label ? s.label.slice(0, 24) : def.name), { x: s.x, y: s.y, scaleX: 1, scaleY: 1, rotation: s.rotation }, s.w, s.h, imageIndex);
+				if (l.name) layer.renamed = true;
+				layer.diagram = spec;
+				layers.push(layer);
+				builtForComposite.push({ key: r.key, label: r.label, ...layer });
+				continue;
+			}
+			if (l.type === 'connector') {
+				const what = `connector ${l.name ?? JSON.stringify(l.from) + ' → ' + JSON.stringify(l.to)} on "${page.name}"`;
+				const a = connectorEnd(l.from, shapes, what);
+				const b = connectorEnd(l.to, shapes, what);
+				// An end with a shape but no anchor takes the side facing the other end.
+				if (a.shape && b.shape) {
+					const [fa, fb] = facingAnchors(a.shape, b.shape);
+					a.anchor ??= fa;
+					b.anchor ??= fb;
+				}
+				const box = (e) => e.shape ?? { x: e.point.x, y: e.point.y, w: 0, h: 0 };
+				if (a.shape && !a.anchor) a.anchor = facingAnchors(a.shape, box(b))[0];
+				if (b.shape && !b.anchor) b.anchor = facingAnchors(b.shape, box(a))[0];
+				const end = (e) => {
+					const p = e.shape ? shapeAnchors(e.shape)[e.anchor] : e.point;
+					return { layerId: e.shape?.layerId ?? null, anchor: e.anchor, x: p.x, y: p.y };
+				};
+				const spec = {
+					from: end(a),
+					to: end(b),
+					style: l.style,
+					arrow: l.arrow,
+					stroke: l.stroke,
+					strokeWidth: l.strokeWidth,
+					dashed: l.lineStyle === 'dashed',
+					label: String(l.label ?? ''),
+					bends: (l.bends ?? []).map((p) => ({ x: p.x, y: p.y })),
+					labelT: l.labelT,
+					labelColor: l.labelColor,
+					fontFamily: l.font,
+					fontSize: l.fontSize,
+					fontWeight: l.weight,
+					lineStyle: l.lineStyle,
+					corner: l.corner
+				};
+				if (l.labelOffset) spec.labelOffset = l.labelOffset;
+				const from = { x: spec.from.x, y: spec.from.y };
+				const to = { x: spec.to.x, y: spec.to.y };
+				if (Math.hypot(to.x - from.x, to.y - from.y) < 4) throw new Error(`${what}: its ends are on top of each other`);
+				const points = routePoints(from, to, spec.style, spec.from.anchor ?? undefined, spec.to.anchor ?? undefined, spec.bends);
+				const line = pointsToPath(points, spec.corner);
+				const size = 8 + spec.strokeWidth * 1.6;
+				const heads = [];
+				if (spec.arrow === 'end' || spec.arrow === 'both') heads.push(arrowHead(points[points.length - 1], points[points.length - 2], size));
+				if (spec.arrow === 'both') heads.push(arrowHead(points[0], points[1], size));
+				const route = { line, heads, bounds: pathBounds(line), at: pointAtT(points, spec.labelT ?? 0.5) };
+				const r = await chrome.evaluate(`(() => {
+					const r = __bcanvas.rasterConnector(${JSON.stringify(spec)}, ${JSON.stringify(route)});
+					const key = 'b' + __built.size;
+					__built.set(key, r.c);
+					return { key, x: r.x, y: r.y, cw: r.c.width, ch: r.c.height, png: __bcanvas.pngBase64(r.c) };
+				})()`);
+				if (r.cw > 8000 || r.ch > 8000) throw new Error(`${what}: over 8000px across — the app would refuse to draw it`);
+				if (!l.bleed) {
+					const xs = points.map((p) => p.x), ys = points.map((p) => p.y);
+					offPage(l.name ?? 'connector', Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys));
+				}
+				const imageIndex = images.length;
+				images.push({ bytes: Buffer.from(r.png, 'base64'), width: r.cw, height: r.ch });
+				const named = (e) => (e.shape ? e.shape.label || e.shape.shape : 'point');
+				const layer = baseLayer(l, layerId(), l.name ?? `${named(a)} → ${named(b)}`, { x: r.x, y: r.y, scaleX: 1, scaleY: 1, rotation: 0 }, r.cw, r.ch, imageIndex);
+				layer.connector = spec;
+				layers.push(layer);
+				builtForComposite.push({ key: r.key, ...layer });
+				continue;
+			}
 			// Shapes, lines and paths are vector layers: a spec the app redraws
 			// sharp at any size, beside the bitmap it would draw from it.
 			const vec = VECTOR_TYPES.has(l.type) ? layerSpec(l) : null;

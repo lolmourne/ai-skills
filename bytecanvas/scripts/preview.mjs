@@ -8,7 +8,7 @@
 // Prints the page tabs the app shows; writes preview-<n>.png per --page
 // (default: the first page) into --out (default: next to the file).
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { launch } from './chrome.mjs';
 
@@ -27,6 +27,7 @@ if (!file) {
 	process.exit(2);
 }
 const outBase = outArg ? resolve(outArg) : dirname(resolve(file));
+mkdirSync(outBase, { recursive: true });
 
 const chrome = await launch({ width: 1600, height: 1000 });
 const until = async (expr, ms = 30000) => {

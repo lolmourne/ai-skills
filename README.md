@@ -5,18 +5,21 @@ Each folder is one self-contained skill.
 
 | Skill | What it does |
 |---|---|
-| [`bytecanvas`](bytecanvas/) | Turns an app's design code — or a brand brief — into ByteCanvas (`.bcanvas`) design guidelines, brand books, logos, UI kits and mock screens, with editable vector layers, named component groups and PNG exports. |
+| [`bytecanvas`](bytecanvas/) | Turns an app's design code — or a brand brief — into ByteCanvas (`.bcanvas`) design guidelines, brand books, logos, UI kits and mock screens, plus flowcharts, use case diagrams, swimlanes and architecture diagrams of its logic, with editable vector layers, named component groups, attached connectors and PNG exports. [Install guide](bytecanvas/README.md#install). |
 
 ## Install
 
 Clone once, then link the skills you want into `~/.claude/skills/`:
 
 ```bash
-git clone https://github.com/<you>/ai-skills ~/ai-skills
+git clone https://github.com/lolmourne/ai-skills.git ~/ai-skills   # or your fork
+mkdir -p ~/.claude/skills
 ln -s ~/ai-skills/bytecanvas ~/.claude/skills/bytecanvas
 ```
 
-A `git pull` in `~/ai-skills` updates every linked skill. To keep a skill for one project only, link it into that project's `.claude/skills/` instead.
+A `git pull` in `~/ai-skills` updates every linked skill. Most skills can also be linked into a single project's
+`.claude/skills/`; `bytecanvas` can't, because its scripts import from `~/.claude/skills/bytecanvas`. Each skill's
+README lists its requirements and how to check the install (for example, [bytecanvas](bytecanvas/README.md#install)).
 
 ## Adding a skill
 

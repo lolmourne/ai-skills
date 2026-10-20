@@ -7,6 +7,8 @@
 // pushes layers into arrays. All coordinates are in the page's logical units —
 // Flutter dp on a mock screen (`scale: 3`), plain pixels on a guideline sheet.
 
+import { CATEGORIES, SHAPE_LIBRARY, shapeDef } from './diagram-lib.mjs';
+
 // ---- primitives -------------------------------------------------------------
 
 export const rect = (x, y, w, h, o = {}) => ({ type: 'rect', x, y, w, h, ...o });
@@ -356,9 +358,117 @@ export function assetPage(name, w, h, layers, { background = null, scale = 3 } =
 	return { name, width: w, height: h, scale, background, layers: layers.flat() };
 }
 
+// ---- diagrams ------------------------------------------------------------------
+// ByteCanvas's own diagram objects: library shapes whose label is part of the
+// shape, and connectors stored as attachments to a shape's anchor, so moving a
+// box in the app drags its lines along. Shape ids are the app's library
+// (`SHAPES` below): flowchart, architecture, network, use case, device frames.
+
+/** Every library shape id, by category — `SHAPES.flow`, `SHAPES.usecase`, … */
+export const SHAPES = Object.fromEntries(CATEGORIES.map((c) => [c.id, SHAPE_LIBRARY.filter((s) => s.category === c.id).map((s) => s.id)]));
+
+/** A library shape with its top-left at (x, y). Size defaults to the shape's own. */
+export const shape = (shapeId, x, y, w, h, label = '', o = {}) => ({ type: 'diagram', shape: shapeId, x, y, w, h, label, ...o });
+
+/**
+ * A library shape centred on (cx, cy) with an `id` connectors can name — the
+ * easy way to lay a flow out on a grid of centres. `o.w`/`o.h` override the
+ * shape's default size.
+ */
+export function node(id, shapeId, label, cx, cy, o = {}) {
+	const def = shapeDef(shapeId);
+	if (!def) throw new Error(`unknown diagram shape "${shapeId}"`);
+	// Even sizes keep a whole-pixel centre, so shapes centred on one row have
+	// anchors on exactly one line — half a pixel off makes the router draw a jog.
+	const even = (v) => Math.max(2, Math.round(v / 2) * 2);
+	const w = even(o.w ?? def.defaultWidth), h = even(o.h ?? def.defaultHeight);
+	return { type: 'diagram', id, shape: shapeId, label, ...o, x: cx - w / 2, y: cy - h / 2, w, h };
+}
+
+/**
+ * A connector between two shapes (by `id`, or a unique label), each end
+ * `'id'`, `'id.s'` (with an anchor: n e s w ne se sw nw) or a loose `{ x, y }`.
+ * Options: `label`, `style` ('orthogonal' | 'straight'), `arrow` ('end' |
+ * 'both' | 'none'), `lineStyle` ('solid' | 'dashed' | 'dotted'), `corner`
+ * ('sharp' | 'rounded' | 'curved'), `bends` [{x,y}], `labelT` (0..1),
+ * `labelOffset`, `stroke`, `strokeWidth`, `labelColor`, `fontSize`.
+ */
+export const connect = (from, to, o = {}) => ({ type: 'connector', from, to, ...o });
+
+/**
+ * Swimlanes: one band per actor/system, a header naming it, all in a group.
+ * Horizontal lanes (the default) stack top to bottom with the flow running
+ * left to right; vertical lanes sit side by side with the flow running down.
+ * Headers are diagram shapes, so their names stay editable in the app; a
+ * horizontal lane's header is a narrow band (< 60px) whose name the app turns
+ * to run up it. Returns `{ layers, lane(nameOrIndex), at(nameOrIndex, along),
+ * width, height }` — `lane()` is the body `{ x, y, w, h, cx, cy }` and
+ * `at(lane, d)` the centre of the lane `d` units into the body along the flow.
+ */
+export function swimlanes({
+	x = 0, y = 0, lanes, length, size = 170, header = 44, title, titleSize = 40,
+	orientation = 'horizontal', fill = '#FFFFFF', altFill = '#F8FAFC', stroke = '#CBD5E1',
+	headerFill = '#E2E8F0', headerStroke, labelColor = '#0F172A', fontSize = 15, font, weight = 700,
+	name = 'Swimlanes'
+}) {
+	const names = lanes.map((l) => (typeof l === 'string' ? l : l.name));
+	const sizes = lanes.map((l) => (typeof l === 'string' ? size : l.size ?? size));
+	const horizontal = orientation !== 'vertical';
+	const t = title ? titleSize : 0;
+	const across = sizes.reduce((a, b) => a + b, 0);
+	const head = { fill: headerFill, stroke: headerStroke ?? stroke, strokeWidth: 1.5, labelColor, fontSize, weight, ...(font ? { font } : {}) };
+	const layers = [];
+	const bodies = [];
+	if (title) {
+		layers.push(horizontal
+			? shape('process', x, y, t, across, title, { ...head, name: `${name} / title` })
+			: shape('process', x, y, across, t, title, { ...head, name: `${name} / title` }));
+	}
+	let off = 0;
+	names.forEach((laneName, i) => {
+		const s = sizes[i];
+		const body = horizontal
+			? { x: x + t + header, y: y + off, w: length - header - t, h: s }
+			: { x: x + off, y: y + t + header, w: s, h: length - header - t };
+		layers.push(horizontal
+			? shape('process', x + t, y + off, header, s, laneName, { ...head, name: `${laneName} / header` })
+			: shape('process', x + off, y + t, s, header, laneName, { ...head, name: `${laneName} / header` }));
+		layers.push(rect(body.x, body.y, body.w, body.h, { fill: i % 2 ? altFill : fill, stroke, strokeWidth: 1.5, name: `${laneName} / lane` }));
+		bodies.push({ ...body, cx: body.x + body.w / 2, cy: body.y + body.h / 2 });
+		off += s;
+	});
+	const lane = (key) => {
+		const i = typeof key === 'number' ? key : names.indexOf(key);
+		if (!bodies[i]) throw new Error(`no swimlane "${key}" (lanes: ${names.join(', ')})`);
+		return bodies[i];
+	};
+	return {
+		layers: [group(name, layers)],
+		lane,
+		at: (key, along) => {
+			const b = lane(key);
+			return horizontal ? { x: b.x + along, y: b.cy } : { x: b.cx, y: b.y + along };
+		},
+		width: horizontal ? length : across,
+		height: horizontal ? across : length
+	};
+}
+
+/**
+ * A plain diagram page at 1x: white, an optional title block, then `layers`
+ * — whose coordinates are page pixels. Keep diagram pages at scale 1: label
+ * sizes, the 60px swimlane-header rule and connector stubs are all in pixels.
+ */
+export function diagramPage(name, { width, height, title, subtitle, background = '#FFFFFF', font = 'Inter', ink = '#0F172A', muted = '#64748B' }, layers) {
+	const head = [];
+	if (title) head.push(text(title, 48, 40, { size: 30, weight: 800, color: ink, font, name: 'title' }));
+	if (subtitle) head.push(text(subtitle, 48, 84, { size: 16, color: muted, font, name: 'subtitle' }));
+	return { name, width, height, background, layers: [...head, ...layers.flat()] };
+}
+
 // ---- reuse ---------------------------------------------------------------------
 
-const GEOM = ['x', 'y', 'w', 'h', 'x1', 'y1', 'x2', 'y2', 'size', 'strokeWidth', 'letterSpacing', 'width'];
+const GEOM = ['x', 'y', 'w', 'h', 'x1', 'y1', 'x2', 'y2', 'size', 'strokeWidth', 'letterSpacing', 'width', 'fontSize', 'labelOffset'];
 const XS = ['x', 'x1', 'x2'];
 const YS = ['y', 'y1', 'y2'];
 
@@ -389,6 +499,9 @@ export function place(layers, { x = 0, y = 0, scale = 1, prefix, clip, group: gr
 		if (Array.isArray(o.dash)) o.dash = o.dash.map((d) => d * scale);
 		if (o.shadow) o.shadow = { ...o.shadow, blur: (o.shadow.blur ?? 8) * scale, distance: (o.shadow.distance ?? 4) * scale };
 		if (o.clip) o.clip = { x: o.clip.x * scale + x, y: o.clip.y * scale + y, w: o.clip.w * scale, h: o.clip.h * scale };
+		// A connector's turns and loose ends move with it; ends on shapes follow the shapes.
+		if (Array.isArray(o.bends)) o.bends = o.bends.map((p) => ({ x: p.x * scale + x, y: p.y * scale + y }));
+		for (const end of ['from', 'to']) if (o.type === 'connector' && typeof o[end]?.x === 'number') o[end] = { ...o[end], x: o[end].x * scale + x, y: o[end].y * scale + y };
 		if (prefix && o.name) o.name = `${prefix}/${o.name}`;
 		return o;
 	});

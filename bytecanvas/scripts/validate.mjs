@@ -68,6 +68,19 @@ manifest.pages.forEach((p, pi) => {
 			if (!v.shape && !(v.paths ?? []).length) fail(`layer "${l.name}" vector has neither a shape nor paths`);
 		}
 	}
+	// Connectors follow their shapes only while each attached end names a
+	// diagram shape on the same page; anything else is a line that stays put.
+	const shapesHere = new Set(p.layers.filter((l) => l.diagram).map((l) => l.id));
+	for (const l of p.layers) {
+		if (l.diagram && typeof l.diagram.shapeId !== 'string') fail(`layer "${l.name}" diagram has no shapeId`);
+		if (!l.connector) continue;
+		for (const which of ['from', 'to']) {
+			const end = l.connector[which];
+			if (!end || !Number.isFinite(end.x) || !Number.isFinite(end.y)) fail(`connector "${l.name}" ${which} has no position`);
+			else if (end.layerId && !shapesHere.has(end.layerId)) fail(`connector "${l.name}" ${which} is attached to ${end.layerId}, which is not a diagram shape on this page`);
+			else if (end.layerId && !end.anchor) fail(`connector "${l.name}" ${which} is attached without an anchor`);
+		}
+	}
 	// Groups: every reference resolves, and each group's layers sit together —
 	// the app regroups a split group on open, which reorders the stack.
 	const groups = new Map((p.groups ?? []).map((g) => [g.id, g]));
@@ -87,7 +100,9 @@ manifest.pages.forEach((p, pi) => {
 console.log(`${file}: ${manifest.pages.length} pages, ${layerCount} layers, ${manifest.images.length} images, ${(buf.length / 1048576).toFixed(2)} MB`);
 for (const p of manifest.pages) {
 	const vectors = p.layers.filter((l) => l.vector).length;
-	const extra = [vectors && `${vectors} vector`, p.groups?.length && `${p.groups.length} group${p.groups.length === 1 ? '' : 's'}`].filter(Boolean).join(', ');
+	const shapes = p.layers.filter((l) => l.diagram).length;
+	const lines = p.layers.filter((l) => l.connector).length;
+	const extra = [vectors && `${vectors} vector`, shapes && `${shapes} diagram shape${shapes === 1 ? '' : 's'}`, lines && `${lines} connector${lines === 1 ? '' : 's'}`, p.groups?.length && `${p.groups.length} group${p.groups.length === 1 ? '' : 's'}`].filter(Boolean).join(', ');
 	console.log(`  - ${p.name} (${p.width}x${p.height}, ${p.layers.length} layers${extra ? `; ${extra}` : ''})`);
 }
 

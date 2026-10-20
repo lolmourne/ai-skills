@@ -128,6 +128,57 @@ top-left minus `pad`. `scripts/vector.mjs` and `build.mjs` reproduce this
 exactly; a spec whose padding disagrees makes the shape jump on its first edit.
 On open every node is checked and one with a non-numeric coordinate dropped.
 
+### Diagram shapes and connectors
+
+```jsonc
+"diagram": {
+  "shapeId": "decision",          // id in the app's shape library (src/lib/diagram/library.ts)
+  "label": "Valid?",              // plain text; optional "runs" for styled text
+  "fill": "#FEF3C7", "stroke": "#B45309", "strokeWidth": 2,
+  "labelColor": "#451A03", "fontSize": 14,
+  // optional:
+  "labelPosition": "inside",      // inside | below | above
+  "fontFamily": "Inter",          // the platform UI font when unset
+  "fontWeight": 500,              // 500 when unset
+  "labelAlign": "center", "lineHeight": 1.25,
+  "lineStyle": "dashed"           // solid (unset) | dashed | dotted | none
+}
+```
+
+The bitmap is the shape alone, at **1x** (layer `width`/`height` = the shape's
+size in document px, `scaleX/Y` 1), the outline inset by half the stroke.
+**The label is not in the bitmap**: the app lays it out from the spec and draws
+it over the shape on every render (and the exports do the same), so a shape's
+words are always live.
+
+```jsonc
+"connector": {
+  "from": { "layerId": "layer_3_ab12cd", "anchor": "s", "x": 430, "y": 572 },
+  "to":   { "layerId": null, "anchor": null, "x": 860, "y": 900 },   // loose end
+  "style": "orthogonal",          // orthogonal | straight
+  "arrow": "end",                 // none | end | both
+  "stroke": "#64748B", "strokeWidth": 2,
+  "dashed": false,                // legacy; lineStyle wins when set
+  "label": "Yes",
+  // optional:
+  "bends": [{ "x": 0, "y": 0 }],  // waypoints; empty = router's own route
+  "labelT": 0.5, "labelOffset": 0,
+  "labelColor": "#15803D", "fontFamily": "Inter", "fontSize": 12, "fontWeight": 500,
+  "lineStyle": "solid",           // solid | dashed | dotted
+  "corner": "sharp"               // sharp | rounded | curved
+}
+```
+
+An attached end stores the shape's layer id and anchor (`n e s w ne se sw nw`)
+**and** the anchor's last known document position. The app re-routes a
+connector only when an attached shape moves and its anchor no longer matches
+the stored `x/y` — it does not re-route on open — so the stored bitmap must be
+the route the app would draw: a bitmap covering the route, arrowheads and label
+plus `pad = ceil(strokeWidth + head + 4)` (`head` = 12, or `12 + 2·strokeWidth`
+with arrows) on every side, at 1x, placed at the bounds' top-left minus `pad`.
+Unlike a shape's, a connector's label **is** in its bitmap. `build.mjs` does
+all of this with the app's own router.
+
 ### Groups, clipping and masks
 
 ```jsonc

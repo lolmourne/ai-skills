@@ -86,6 +86,8 @@ Colours are `#RGB`, `#RRGGBB` or `#RRGGBBAA` (`kit.alpha(hex, a)` for
 | `image` | `src` (file path, data URL or https), `x y w h`, `fit` (`cover` default, `contain`, `fill`), `radius`, `tint` (recolour all opaque pixels) |
 | `svg` | `src` or `markup` (inline SVG string), `x y w h`, `fit` (`contain` default), `tint`, `density` (pixels per page pixel, default 2 — use 1 for textures, 0.5 for soft gradients to keep files small) |
 | `page` | `page` (name of an EARLIER page), `x y w h`, `radius` — a thumbnail of that page's composite |
+| `diagram` | `shape` (library id), `id` (for connectors), `x y w h` (default: the shape's own size), `label` (`\n` breaks; wraps inside the shape), `fill`, `stroke`, `strokeWidth`, `labelColor`, `fontSize`, `font`, `weight`, `labelPosition` (`inside` / `below` / `above`), `labelAlign`, `lineHeight`, `lineStyle` (`solid` / `dashed` / `dotted` / `none`), `rotation` — see **Diagrams** |
+| `connector` | `from`, `to` (each `'id'`, `'id.anchor'`, `{ shape, anchor }` or a loose `{ x, y }`), `style` (`orthogonal` / `straight`), `arrow` (`end` / `both` / `none`), `label`, `labelT`, `labelOffset`, `stroke`, `strokeWidth`, `lineStyle`, `corner` (`sharp` / `rounded` / `curved`), `bends: [{x,y}]`, `labelColor`, `fontSize`, `font`, `weight` |
 
 `gradient`: `{ "type": "linear", "angle": 135, "stops": [["#062A44", 0], ["#0A3D62", 1]] }`
 — CSS convention (0° = up, 90° = right, 180° = down); `type: "radial"` too.
@@ -118,6 +120,52 @@ Two more layer fields:
 - `clip` (the crop above) on a vector layer becomes a rectangular vector mask
   rather than a cut bitmap, so the shape stays editable.
 
+## Diagrams
+
+`diagram` and `connector` layers are ByteCanvas's own diagram objects, not
+drawings: a shape carries a `diagram` spec (its label is drawn by the app over
+the shape and edited on double-click) and a connector a `connector` spec whose
+ends are **attached** to shapes' anchors, so moving a box in the app re-routes
+its lines. Shape geometry, anchors and routing are the app's own
+(`scripts/diagram-lib.mjs`).
+
+- **Shape ids** — flow: `process alt-process decision terminator data document
+  manual-input preparation delay connector-dot`; use case: `actor use-case
+  boundary`; architecture: `server database warehouse cache storage queue
+  load-balancer api gateway compute memory container pod function cdn dns cloud
+  monitoring vault firewall client mobile`; network: `modem router switch hub
+  access-point patch-panel rack internet workstation laptop printer`; devices:
+  `iphone-15 iphone-max iphone-se android-phone … ipad-pro-13`. An unknown id
+  fails the build with the full list. `kit.SHAPES` has them by category.
+- **Labels** wrap to the shape's width less 10px a side and centre vertically.
+  Architecture, network and actor shapes put their label `below`; a
+  `boundary`'s sits in its top band; an inside label in a band narrower than
+  60px and 1.6x taller than wide runs up it (swimlane headers). The build
+  warns when a label does not fit its shape.
+- **Anchors**: `n e s w ne se sw nw` (a decision's are its own corners). An end
+  without one takes the side facing the other shape — e/w when they sit more
+  side by side, s/n when more above one another — except that a line never
+  leaves through an outside label (actors, icons): stacked shapes like that
+  join on their sides instead. `kit.node` rounds sizes to even pixels so
+  centred shapes on one row have anchors on exactly one line (half a pixel off
+  and the router draws a jog).
+- **Routing**: `orthogonal` (default) aims for a single elbow, leaving and
+  arriving along each anchor's outward direction (18px stubs when it must turn
+  back); `straight` is a direct line through any `bends`. Labels sit at
+  `labelT` (0..1, default 0.5) along the route, just above a horizontal run or
+  right of a vertical one, unless `labelOffset` (signed px to the side) is set.
+- **Ids**: a connector names a shape by its `id`, or by its label when that is
+  unique on the page. Ids are per page; connectors may come before or after
+  the shapes they join in the stack.
+- **Defaults** (light page): shapes `#EEF2FF` fill, `#4338CA` stroke 2px,
+  `#1E1B4B` label (outside labels `#1E293B`), 14px weight 500 in
+  `defaults.font`; connectors orthogonal, end arrow, `#64748B` 2px, labels
+  12px `#334155`. Override per layer or scene-wide with
+  `defaults.diagram: { fill, stroke, strokeWidth, labelColor, outsideLabelColor, fontSize, font, weight }`
+  and `defaults.connector: { …any connector field }`.
+- Keep diagram pages at `scale: 1`: sizes are page pixels, and the app's
+  label and stub rules are in pixels.
+
 ## Kit cheatsheet (`scripts/kit.mjs`)
 
 ```js
@@ -146,4 +194,13 @@ k.iconsPage({ icons: [{ name, label?, style? }], style, color, tile, theme })
 k.flowPage({ screens: [{ page, label }], theme, name, title, intro })
 const s = k.sheet(name, { title, intro, theme }); s.add(...layers); k.fit(s, bottomY)   // custom sheet
 k.assetPage(name, w, h, layers, { background, scale })   // one exportable component per page
+
+// diagrams
+k.node(id, shapeId, label, cx, cy, { w, h, fill, stroke, labelColor, fontSize, … })   // centred, with an id
+k.shape(shapeId, x, y, w, h, label, o)                                               // top-left placed
+k.connect(from, to, { label, style, arrow, lineStyle, corner, bends, labelT, … })   // 'id', 'id.s', {x,y}
+const lanes = k.swimlanes({ x, y, lanes: ['A', 'B'], length, size: 170, header: 44, orientation, title })
+lanes.layers; lanes.lane('A') /* {x,y,w,h,cx,cy} */; lanes.at('A', along) /* {x,y} centre */
+k.diagramPage(name, { width, height, title, subtitle, background, font }, layers)
+k.SHAPES   // { flow: [...], architecture: [...], network: [...], usecase: [...], device: [...] }
 ```

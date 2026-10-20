@@ -1,15 +1,16 @@
 ---
 name: bytecanvas
-description: Create ByteCanvas (.bcanvas) files — design guidelines, style guides, brand boards, logos, UI kits and mock app screens — from a codebase (Flutter, web, etc.) or a brief, with every element a separate editable layer (shapes as live vectors, components as named groups) and PNG exports of each screen and asset. Use when the user asks for anything "in .bcanvas format", "for ByteCanvas", a "guideline app" / design guideline / style guide / brand guideline / logo / UI kit / mockup for a project, mock screens to export assets from, or to read/inspect/modify an existing .bcanvas file.
+description: Create ByteCanvas (.bcanvas) files — design guidelines, style guides, brand boards, logos, UI kits, mock app screens, and diagrams (flowcharts, use case diagrams, swimlanes, architecture/network diagrams) of a codebase's logic — from code (Flutter, web, backend, etc.) or a brief, with every element a separate editable layer (shapes as live vectors, components as named groups, diagram boxes as real ByteCanvas diagram shapes joined by attached connectors) and PNG exports of each page. Use when the user asks for anything "in .bcanvas format", "using .bcanvas", "for ByteCanvas", a "guideline app" / design guideline / style guide / brand guideline / logo / UI kit / mockup for a project, a flow diagram / flowchart / use case / swimlane / activity / architecture diagram of some code or process, mock screens to export assets from, or to read/inspect/modify an existing .bcanvas file.
 ---
 
-# ByteCanvas guidelines & mock apps
+# ByteCanvas guidelines, mock apps & diagrams
 
 ByteCanvas is a browser image editor and diagram tool, live at
 https://bytecanvas.adrianuskevinkusuma.com (`validate.mjs` also runs the app's
 own reader when a checkout is found via `--repo` or `BYTECANVAS_REPO`). `.bcanvas` is its project format:
 pages, each holding layers, each layer a PNG plus optional metadata (text spec,
-effects). This skill produces those files from a project's real design code.
+effects, diagram shape, connector). This skill produces those files from a project's real design code —
+or, for diagrams, from its real logic (see **Diagrams** below).
 
 **Deliverables of a guideline request** (adapt to the project):
 
@@ -38,8 +39,10 @@ also writes every page to PNG directly (`exports/`), plus optional crops
 | `build.mjs <scene.mjs\|json> [--out f.bcanvas] [--png dir]` | Rasterises every layer in headless Chrome (Canvas 2D + Google Fonts + Material Icons — the same engine ByteCanvas draws with), packs the `.bcanvas`, writes PNGs of every page and slice. |
 | `validate.mjs <f.bcanvas>` | Structural checks, plus ByteCanvas's own `unpackProject`/`restoreDocument` when the repo is on disk. |
 | `preview.mjs <f.bcanvas> [--page n\|name]… [--out dir]` | Opens the file in the real web app (drop, as Finder does), prints the page tabs, screenshots chosen pages. |
-| `kit.mjs` | Authoring helpers: primitives, vector shapes (`polygon`, `star`, `path`), `group()` / `place(…, { group })` for components, `clipped()` for clipping masks, phone chrome, and ready-made guideline sheets. |
+| `kit.mjs` | Authoring helpers: primitives, vector shapes (`polygon`, `star`, `path`), `group()` / `place(…, { group })` for components, `clipped()` for clipping masks, phone chrome, ready-made guideline sheets, and diagrams (`node`, `connect`, `swimlanes`, `diagramPage`). |
 | `vector.mjs` | Shape geometry, SVG path parsing (arcs included) and stroke padding, ported from the app so its vector layers match the app's own to the pixel. |
+| `diagram-lib.mjs` | The app's own diagram shape library (59 shapes), anchors and connector router, bundled from its source — generated, don't edit. |
+| `sync-diagram.mjs` | Regenerates `diagram-lib.mjs` from a ByteCanvas checkout (after the app's shapes or routing change). |
 
 `S=~/.claude/skills/bytecanvas/scripts` below.
 
@@ -104,6 +107,79 @@ It must print `app says: Opened … — N pages, M layers`.
 
 Where the `.bcanvas` and `exports/` are, the page list, how to regenerate (`node $S/build.mjs …`), and anything noticed about the design system worth acting on (e.g. a colour pair failing contrast, inconsistent radii) — as observations, not changes to their code.
 
+## Diagrams (flowcharts, use cases, swimlanes, architecture)
+
+The scene format **has** diagram objects: `diagram` layers are ByteCanvas
+library shapes (label inside the shape, editable on double-click) and
+`connector` layers are lines **attached to a shape's anchor**, so in the app a
+moved box drags its lines along and re-routes them. Never fake a diagram with
+`rect` + `text` + `line`/`path` layers — that is a drawing of a diagram, and it
+falls apart the moment someone moves a box. Shapes, anchors and routes come
+from the app's own code (`diagram-lib.mjs`), so what the builder draws is what
+the app would draw.
+
+**Shapes** (`k.SHAPES`): flow — `process alt-process decision terminator data
+document manual-input preparation delay connector-dot`; use case — `actor
+use-case boundary`; architecture — `server database warehouse cache storage
+queue load-balancer api gateway compute memory container pod function cdn dns
+cloud monitoring vault firewall client mobile`; network — `modem router switch
+hub access-point patch-panel rack internet workstation laptop printer`; plus
+device frames. Architecture/network icons and actors put their name below.
+
+### 1. Read the logic from the code — never invent it
+
+The diagram is only worth having if it is the code's real behaviour. Find:
+
+- **Entry points**: the route/handler/controller/screen that starts the flow (e.g. `POST /payments`, `PaymentRequestPage`).
+- **States and transitions**: status enums (`PENDING → APPROVED/REJECTED → PAID`), state machines, workflow tables, migrations defining status columns. These become decisions and end states.
+- **Guards and branches**: `if` thresholds (amount limits), validation, role/permission checks (`hasRole('FINANCE')`), feature flags. Quote the real threshold and role names.
+- **Actors**: roles, user types, external systems the code calls (payment gateway client, email/notification service, queues, cron jobs). Actors → use case actors and swimlanes.
+- **Side effects**: DB writes, events published, notifications sent — these are the steps in the system's lane.
+
+Cite file:line for each step in your report so the user can check it.
+
+### 2. Pick the diagram for the question
+
+- **Flowchart** — one path through the logic with its decisions. `terminator` start/end, `process` steps, `decision` diamonds (label the outgoing lines `Yes`/`No` or the condition), `data`/`manual-input` for user input, `document` for records/reports.
+- **Use case** — who can do what. `actor`s outside a `boundary` (the system; its name sits in the top band), `use-case` ellipses inside. Associations: `{ arrow: 'none', style: 'straight' }`. `«include»`/`«extend»`: `{ lineStyle: 'dashed', style: 'straight', label: '«include»' }` (arrow towards the included case; for «extend», from the extension to the base).
+- **Swimlane** — the flow by who acts: `k.swimlanes({ lanes: ['Requester', 'System', 'Supervisor', 'Finance'], length, x, y })`, then place steps with `lanes.at(lane, along)`. Lines crossing lanes are ordinary connectors.
+- **Architecture** — services and stores: `client api gateway server database queue cache function …` joined by connectors labelled with the protocol/call.
+- **Sequence** — not a library shape: draw participants as `process` boxes, lifelines as dashed `k.line`s, and messages as `straight` connectors between loose points `{ x, y }` on the lifelines, labelled with the call.
+
+One request for several diagram types → one `.bcanvas` with one page per diagram.
+
+### 3. Write the scene
+
+```js
+const k = await import(`${homedir()}/.claude/skills/bytecanvas/scripts/kit.mjs`);
+const page = k.diagramPage('Payment / Flowchart', { width: 1060, height: 1560, title: '…', subtitle: '…' }, [
+  k.node('start', 'terminator', 'Start', 430, 170),            // id, shape, label, centre x, centre y, { w, h, fill, stroke, labelColor, fontSize }
+  k.node('valid', 'decision', 'Valid?', 430, 530, { fill: '#FEF3C7', stroke: '#B45309' }),
+  k.node('reject', 'process', 'Reject & notify', 860, 960, { w: 190 }),
+  k.connect('start', 'valid'),                                   // anchors picked automatically: the facing sides
+  k.connect('valid.e', 'reject.n', { label: 'No' }),             // or explicit: id.n|e|s|w|ne|se|sw|nw
+]);
+export default { output: 'payment-diagrams.bcanvas', pngDir: 'exports', defaults: { font: 'Inter' }, pages: [page] };
+```
+
+A complete, verified example of all three — `examples/payment-approval-diagrams.mjs`.
+
+Layout rules that keep it readable:
+
+- **Keep diagram pages at `scale: 1`** (`diagramPage` does) — label sizes, connector stubs and the < 60px swimlane-header rule are in pixels.
+- **Lay out on a grid of centres**: one main column (or lane row) for the happy path; branches step sideways by a fixed amount; rows 110–150px apart, enough for a label between boxes.
+- **Use explicit anchors on decisions** (`'d.s'` for Yes down, `'d.e'` for No sideways) and wherever two lines would meet the same side. Automatic anchors take the facing sides, never through an actor's or icon's name. Give shapes on one row the same centre `y` (and one column the same `x`) so the lines between them are straight.
+- Orthogonal connectors aim for one elbow: from an `e`/`w` anchor to an `n`/`s` anchor gives a clean L; two `s`→`n` give a Z through the middle. If a route still crosses something, move the boxes or add `bends: [{ x, y }]`.
+- Size boxes to their words (`w`), or break the label with `\n` — the builder warns when a label doesn't fit its shape.
+- Connectors may come before the shapes they join in the layer list (lines under boxes); a connector's ends are looked up by shape `id` (or a unique label) on the same page.
+- Colour by meaning and say so in the subtitle or a legend: one colour for steps, one for decisions, green start/end, red rejection paths.
+
+### 4. Build, look, open in the app
+
+Same as below (`build.mjs`, `validate.mjs` — it reports shapes/connectors and checks every attachment —, look at the PNGs, `preview.mjs`). Check: no line through a box or a label, every decision has all its exits labelled, every path reaches an end.
+
+Tell the user how to work with it in ByteCanvas: **Diagram Mode (`S`)** — drag a box and its lines follow; double-click a box or line to retype it; drag a line's diamonds to reshape it or its ends onto another shape; **File › Export › SVG** or **PDF › Editable** writes shapes and lines as vector paths and labels as real text.
+
 ## Logos and brand guidelines
 
 ByteCanvas now has what a brand book needs: vector shapes, a pen and point editor, boolean Combine Shapes, groups, clipping and vector masks, text to outlines and SVG export. Build for it:
@@ -150,6 +226,7 @@ Moving or copying layers between pages is also a manifest edit: give each copy a
 ## Gotchas
 
 - Fonts and icons come from Google Fonts at build time — needs network. A family not on Google Fonts renders in a fallback (warned).
+- Diagram shape labels are drawn by the app over the shape from the spec (not stored in pixels), so use a Google font for them (`defaults.font`) — the app fetches it; a local-only font falls back in the app.
 - Every `.bcanvas` layer has pixels; text and vector layers also carry their spec. Text is editable on double-click and becomes real text in the editable PDF; shapes and paths are live vectors (resize redraws them, the SVG and editable-PDF exports write them as paths). Icons, images, SVG layers, page thumbnails and gradient-filled shapes are plain pixels (resize = resample).
 - A `clip` (crop) on a vector layer becomes a rectangular vector mask, not a cut bitmap; on any other layer it crops the bitmap as before.
 - Shadows are stored as ByteCanvas drop-shadow **effects** (editable), not baked in.
