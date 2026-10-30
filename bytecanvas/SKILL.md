@@ -12,6 +12,10 @@ pages, each holding layers, each layer a PNG plus optional metadata (text spec,
 effects, diagram shape, connector). This skill produces those files from a project's real design code —
 or, for diagrams, from its real logic (see **Diagrams** below).
 
+**A diagram for a document?** Draw it here, then place it with the **bytedocs**
+skill: a `.bdoc` keeps the `.bcanvas` behind a figure, so a double-click in
+ByteDocs opens these shapes. Give each diagram its own page, cropped to it.
+
 **Deliverables of a guideline request** (adapt to the project):
 
 1. `00 Cover` — product name, logo, version
