@@ -4,7 +4,7 @@ A ZIP with stored (uncompressed) entries. Rename one to `.zip` and its pictures
 are right there.
 
     document.json            title, page setup, styles, blocks, media index
-    media/<id>.png           the picture a figure shows
+    media/<id>.png           the picture a figure or table cell shows
     media/<id>.bcanvas       the drawing behind it, when there is one
 
 Build and read it with `packDoc` and `unpackDoc` from `scripts/doc-lib.mjs`.
@@ -17,7 +17,7 @@ dropped, unusable style values take the preset's, and only `http(s):` and
 
 ```js
 {
-  app: 'ByteCanvas', kind: 'document', version: 1, savedAt: '…',
+  app: 'ByteCanvas', kind: 'document', version: 2, savedAt: '…',
   title: 'Checkout v2',
   setup: { … },
   styles: { … },
@@ -39,7 +39,7 @@ Every block has an `id`, unique in the document (`newId()`).
 | `bullet`, `number`, `todo` | `runs`, `indent` (0–4, also on `p`), `checked` (to-do) |
 | `divider` | none |
 | `figure` | `media` (id), `width`, `caption` (plain text) |
-| `table` | `rows`: `rows[r][c]` is the runs of a cell; the first row is the header |
+| `table` | `rows`: `rows[r][c]` is the runs of a cell; the first row is the header. Optional `widths`, `heights`, `pictures` (below) |
 
 Text blocks may override their style with `align` (`left`, `center`, `right`,
 `justify`), `spacing` (line multiple, 0.8–3), `before`, `after` (points, 0–72)
@@ -47,6 +47,14 @@ and `keepNext` (boolean).
 
 A figure's `width` is in a 720-unit column whatever the page: 360 is half the
 text column on any paper, and in Word.
+
+A table's optional sizes follow the same rule. `widths` has one number per
+column, in that 720-unit column, and 0 means the column fits its content;
+absent, the columns share the text column equally. `heights` has one number per
+row, in CSS pixels, each the row's height at least; 0 fits the content.
+`pictures[r][c]` is laid out like `rows` and lists the pictures under that
+cell's text, each `{ id, media, width }` with `width` in the 720-unit column;
+the media is in the same index as a figure's, drawings included.
 
 ## Runs
 
