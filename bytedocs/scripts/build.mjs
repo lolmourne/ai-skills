@@ -40,8 +40,10 @@ import {
 	packDoc,
 	plainText,
 	presetById,
+	sanitizeBand,
 	sanitizeSetup,
-	sanitizeStyles
+	sanitizeStyles,
+	textToBand
 } from './doc-lib.mjs';
 
 const args = process.argv.slice(2);
@@ -142,8 +144,26 @@ function bodyToBlocks(body) {
 	return out;
 }
 
+/**
+ * A header or footer: a string is its text (lines split on a newline, or on a
+ * literal `\n` in front matter, marks as inline Markdown, `{page}` and
+ * `{pages}` as page numbers); an object is a band as the format stores it.
+ */
+function bandFrom(v, align = 'center', rule) {
+	if (v === undefined || v === null || v === '') return undefined;
+	if (typeof v === 'object') return sanitizeBand(v);
+	const band = textToBand(String(v).replace(/\\n/g, '\n'), align, false);
+	if (!band) return undefined;
+	band.rule = rule === undefined ? false : rule === true || rule === 'true' || rule === 'yes';
+	return band;
+}
+
 function setupFrom(meta) {
 	const s = { ...DEFAULT_SETUP };
+	for (const side of ['header', 'footer']) {
+		const band = bandFrom(meta[side], meta[`${side}-align`] || 'center', meta[`${side}-rule`]);
+		if (band) s[side] = band;
+	}
 	for (const k of ['format', 'paper', 'orientation', 'width']) if (meta[k]) s[k] = meta[k];
 	if (meta.margins) {
 		const n = meta.margins.split(/[\s,]+/).map(Number);
@@ -177,7 +197,12 @@ if (extname(src) === '.mjs') {
 		const copy = structuredClone(styles);
 		styles = sanitizeStyles(scene.styles(copy) ?? copy);
 	} else if (scene.styles) styles = sanitizeStyles(scene.styles);
-	setup = sanitizeSetup({ ...DEFAULT_SETUP, ...scene.setup });
+	const bands = {};
+	for (const side of ['header', 'footer']) {
+		const band = bandFrom(scene[side], scene[`${side}Align`] || 'center', scene[`${side}Rule`]);
+		if (band) bands[side] = band;
+	}
+	setup = sanitizeSetup({ ...DEFAULT_SETUP, ...scene.setup, ...bands });
 	blocks = typeof scene.body === 'string' ? bodyToBlocks(scene.body) : scene.body;
 	title = scene.title ?? '';
 } else {

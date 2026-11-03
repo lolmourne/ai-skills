@@ -11,7 +11,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve, dirname } from 'node:path';
-import { blocksToMarkdown, buildDocx, unpackDoc } from './doc-lib.mjs';
+import { bandToText, blocksToMarkdown, buildDocx, unpackDoc } from './doc-lib.mjs';
 
 const args = process.argv.slice(2);
 const take = (name) => {
@@ -51,7 +51,10 @@ function figureLine(b) {
 
 const s = doc.setup;
 const front = ['---', `title: ${doc.title}`, `preset: ${doc.styles.id}`, `format: ${s.format}`, `paper: ${s.paper}`, `orientation: ${s.orientation}`,
-	`margins: ${s.margins.top} ${s.margins.bottom} ${s.margins.left} ${s.margins.right}`, `width: ${s.width}`, '---', ''].join('\n');
+	`margins: ${s.margins.top} ${s.margins.bottom} ${s.margins.left} ${s.margins.right}`, `width: ${s.width}`,
+	// Headers and footers as build.mjs reads them back: lines joined by a literal \n, one alignment.
+	...['header', 'footer'].flatMap((side) => s[side] ? [`${side}: ${bandToText(s[side]).replace(/\n/g, '\\n')}`, `${side}-align: ${s[side].lines[0].align}`, `${side}-rule: ${s[side].rule}`] : []),
+	'---', ''].join('\n');
 
 // Runs of text blocks go through the app's writer; figures are lines of their own.
 const parts = [];

@@ -80,6 +80,9 @@ and `validate.mjs` says so. A table's first row is its header.
 | `orientation` | `portrait`, `landscape` |
 | `margins` | inches: `1`, or `top bottom left right` |
 | `width` | pageless text width: `narrow`, `medium`, `wide`, `full` |
+| `header`, `footer` | text on every page; lines split on a literal `\n`, `**bold**`, `{page}` and `{pages}` for page numbers |
+| `header-align`, `footer-align` | `left`, `center` (default), `right` |
+| `header-rule`, `footer-rule` | `true` for a line under the header / over the footer |
 
 Pick the preset for the reader: `default` or `modern` for a working PRD,
 `technical` for an engineering spec, `corporate` for something going to a
@@ -182,6 +185,21 @@ export default {
 	setup: { format: 'pageless', width: 'wide' },
 	body: `# Goals\n\nText, or an array of blocks.`
 };
+```
+
+A letterhead, or anything that needs sizes and colours per line, is a band
+object (`reference/format.md`) in the `.mjs`, with a top margin to hold it:
+
+```js
+	header: {
+		rule: true,
+		lines: [
+			{ align: 'center', runs: [{ text: 'ACME LTD', b: true, size: 14 }] },
+			{ align: 'center', runs: [{ text: '1 Main Street, Springfield', size: 8.5, color: '#4b5563' }] }
+		]
+	},
+	footer: 'Page {page} of {pages}', footerAlign: 'right',
+	setup: { margins: { top: 1.35, bottom: 0.9, left: 1, right: 1 } },
 ```
 
 Each of `title`, `p`, `h1`, `h2`, `h3`, `quote`, `code` has `font`, `size`, `bold`,

@@ -64,9 +64,19 @@ Line breaks are `\n` in `text`. Marks that are off are absent, not `false`.
 
 ## `setup`
 
-`{ format, paper, orientation, margins: { top, bottom, left, right }, width }`.
+`{ format, paper, orientation, margins: { top, bottom, left, right }, width, header?, footer? }`.
 Margins are in inches. `width` is the pageless text width. A pageless document
 exports to Word and prints on default A4.
+
+`header` and `footer` are bands repeated on every page: `{ lines: [{ runs, align }], rule }`.
+`align` is `left`, `center` or `right`; `rule` draws a line under the header or
+over the footer. At most six lines; an empty band is dropped. `{page}` and
+`{pages}` in the text are page numbers: filled per sheet in the app, Word's own
+PAGE and NUMPAGES fields in the `.docx`, `counter(page)` in print. A band sits
+0.5in from the paper's edge, so the margin must be tall enough to hold it (a
+three-line letterhead wants about 1.35in at the top); `validate.mjs` warns.
+A document with a header or footer is written as format version 3; one without
+stays version 2.
 
 ## `styles`
 

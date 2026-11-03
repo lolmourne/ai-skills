@@ -54,6 +54,15 @@ try {
 
 console.log(`title: ${doc.title || '(none)'}`);
 console.log(`preset: ${doc.styles.name} (${doc.styles.id}), ${doc.setup.format}${doc.setup.format === 'pages' ? `, ${doc.setup.paper} ${doc.setup.orientation}` : ''}`);
+for (const side of ['header', 'footer']) {
+	const band = doc.setup[side];
+	if (band) console.log(`${side}: ${band.lines.map((l) => l.runs.map((r) => r.text).join('')).join(' / ')}${band.rule ? ' (with rule)' : ''}`);
+}
+const bandLines = (b) => (b ? b.lines.length : 0);
+if (doc.setup.format === 'pages' && bandLines(doc.setup.header) * 0.22 + 0.5 > doc.setup.margins.top + 0.05)
+	warnings.push(`the header (${bandLines(doc.setup.header)} lines) may not fit the ${doc.setup.margins.top}in top margin: raise it`);
+if (doc.setup.format === 'pages' && bandLines(doc.setup.footer) * 0.22 + 0.5 > doc.setup.margins.bottom + 0.05)
+	warnings.push(`the footer (${bandLines(doc.setup.footer)} lines) may not fit the ${doc.setup.margins.bottom}in bottom margin: raise it`);
 console.log(`blocks: ${doc.blocks.length} — ${Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ')}`);
 const toc = outline(doc.blocks);
 if (toc.length) console.log(`outline:\n${toc.map((e) => `${'  '.repeat(e.level)}${e.text}`).join('\n')}`);

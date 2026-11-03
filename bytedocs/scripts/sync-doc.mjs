@@ -41,7 +41,8 @@ writeFileSync(
 		`export { markdownToBlocks, blocksToMarkdown, parseInline, runsToMarkdown } from ${at('markdown.ts')};`,
 		`export { packDoc, unpackDoc, DocFormatError, DOC_EXTENSION } from ${at('format.ts')};`,
 		`export { buildDocx } from ${at('docx.ts')};`,
-		`export { DEFAULT_SETUP, PAPERS, TEXT_WIDTHS, pageGeometry, sanitizeSetup } from ${at('page.ts')};`,
+		`export { DEFAULT_SETUP, PAPERS, TEXT_WIDTHS, pageGeometry, printedSetup, sameSetup, sanitizeSetup } from ${at('page.ts')};`,
+		`export { BAND_EDGE, bandToText, editBand, fillFields, hasBand, sanitizeBand, splitFields, textToBand } from ${at('bands.ts')};`,
 		`export { DEFAULT_STYLES, PRESETS, ROLES, ROLE_LABELS, presetById, sanitizeStyles } from ${at('styles.ts')};`
 	].join('\n')
 );
