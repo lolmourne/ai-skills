@@ -2,8 +2,8 @@
 
 A [Claude Code](https://claude.com/claude-code) skill that writes, reads and changes
 [ByteDocs](https://bytecanvas.adrianuskevinkusuma.com/doc) `.bdoc` documents: PRDs, specs and reports with real
-headings, lists, tables, style presets and page setup, with ByteCanvas drawings embedded as figures you can
-double-click to edit, and `.docx` export.
+headings, lists, tables, timelines (Gantt charts), style presets and page setup, with ByteCanvas drawings
+embedded as figures you can double-click to edit, and `.docx` export.
 
 Ask Claude for "a PRD for guest checkout in .bdoc, with a flow diagram" and it reads the code, writes the document,
 draws the flow with the [`bytecanvas`](../bytecanvas/) skill, places it, builds the file and checks it in the real app.

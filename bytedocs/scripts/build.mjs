@@ -17,6 +17,12 @@
 //   ---
 //   ![Caption](flow.png "width=M project=flow.bcanvas scale=2")
 //
+//   ```timeline                 a Gantt chart: rows nested by indentation,
+//   title: Q4 launch            three levels; `| start | end-or-5d | #colour`
+//   - Design                    (a phase may leave its dates to its tasks)
+//     - Research | 2026-11-02 | 2026-11-04
+//   ```
+//
 // A figure alone on its line takes a PNG, and with `project=` the `.bcanvas`
 // behind it, which is what makes it editable in the app. width is S, M, L,
 // Full or a percentage of the column; scale is how many pixels the PNG has per
@@ -43,7 +49,9 @@ import {
 	sanitizeBand,
 	sanitizeSetup,
 	sanitizeStyles,
-	textToBand
+	sanitizeTimeline,
+	textToBand,
+	timelineFromText
 } from './doc-lib.mjs';
 
 const args = process.argv.slice(2);
@@ -122,8 +130,31 @@ const FIGURE = /^!\[([^\]]*)\]\(\s*([^\s)]+)(?:\s+"([^"]*)")?\s*\)\s*$/;
 /** A page break: Markdown has none, so a comment other readers hide, on a line of its own. */
 const PAGE_BREAK = /^<!--\s*page\s*break\s*-->$/i;
 
+/**
+ * A timeline fence is read by the app's own Markdown reader, which is
+ * forgiving the way a paste must be: a row it cannot draw is left out. A build
+ * is not a paste, so every fence is read here first and a row in error stops
+ * the build with its line, rather than a plan arriving one task short.
+ */
+function checkTimelines(body) {
+	const lines = body.split(/\r?\n/);
+	const problems = [];
+	for (let i = 0; i < lines.length; i++) {
+		if (!/^\s*(```|~~~)\s*timeline\s*$/i.test(lines[i])) continue;
+		const start = i + 1;
+		const rows = [];
+		for (i++; i < lines.length && !/^\s*(```|~~~)/.test(lines[i]); i++) rows.push(lines[i]);
+		const { block, errors } = timelineFromText(rows.join('\n'));
+		for (const e of errors) problems.push(e.replace(/^line (\d+)/, (_, n) => `line ${start + Number(n)}`));
+		if (!errors.length && !block.items.length) problems.push(`line ${start}: a timeline with no rows`);
+	}
+	return problems;
+}
+
 /** Markdown around figures: the reader has no images, deliberately, so they are split out first. */
 function bodyToBlocks(body) {
+	const problems = checkTimelines(body);
+	if (problems.length) fail(`timeline:\n  ${problems.join('\n  ')}`);
 	const out = [];
 	let chunk = [];
 	const flush = () => {
@@ -210,7 +241,8 @@ if (extname(src) === '.mjs') {
 		if (band) bands[side] = band;
 	}
 	setup = sanitizeSetup({ ...DEFAULT_SETUP, ...scene.setup, ...bands });
-	blocks = typeof scene.body === 'string' ? bodyToBlocks(scene.body) : scene.body;
+	// Blocks given as objects are checked as a file would be: a timeline with bad rows is repaired, not trusted.
+	blocks = typeof scene.body === 'string' ? bodyToBlocks(scene.body) : scene.body.map((b) => (b.type === 'timeline' ? sanitizeTimeline(b, b.id ?? newId()) : b));
 	title = scene.title ?? '';
 } else {
 	const { meta, body } = frontMatter(readFileSync(src, 'utf8'));
@@ -225,7 +257,8 @@ if (!blocks.length) fail('the document has no content');
 const doc = { title, blocks, media, setup, styles };
 const out = resolve(outArg ?? `${dirname(src)}/${stem}.bdoc`);
 writeFileSync(out, packDoc(doc));
-console.log(`wrote ${out} — ${blocks.length} blocks, ${media.size} figure(s), preset ${styles.id}, ${setup.format}`);
+const timelines = blocks.filter((b) => b.type === 'timeline').length;
+console.log(`wrote ${out} — ${blocks.length} blocks, ${media.size} figure(s)${timelines ? `, ${timelines} timeline(s)` : ''}, preset ${styles.id}, ${setup.format}`);
 if (docxArg) {
 	writeFileSync(resolve(docxArg), buildDocx(doc));
 	console.log(`wrote ${resolve(docxArg)}`);

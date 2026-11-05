@@ -41,6 +41,7 @@ Every block has an `id`, unique in the document (`newId()`).
 | `pagebreak` | none — what follows starts a new page; Word's own page break in `.docx`, absent from Markdown (`read.mjs` writes `<!-- pagebreak -->`) |
 | `figure` | `media` (id), `width`, `caption` (plain text) |
 | `table` | `rows`: `rows[r][c]` is the runs of a cell; the first row is the header. Optional `widths`, `heights`, `pictures` (below) |
+| `timeline` | `title`, `items` (below), optional `scale` (`day`, `week`, `month`, `quarter`, `year`; absent picks one), `workdays` (true), `display` (below) |
 
 Text blocks may override their style with `align` (`left`, `center`, `right`,
 `justify`), `spacing` (line multiple, 0.8–3), `before`, `after` (points, 0–72)
@@ -56,6 +57,36 @@ row, in CSS pixels, each the row's height at least; 0 fits the content.
 `pictures[r][c]` is laid out like `rows` and lists the pictures under that
 cell's text, each `{ id, media, width }` with `width` in the 720-unit column;
 the media is in the same index as a figure's, drawings included.
+
+A timeline's `items` are a flat list in display order, each
+`{ id, title, start, end, level, color?, progress?, milestone?, after? }`:
+
+- `start` and `end` are `YYYY-MM-DD` calendar days, the end included, so a
+  one-day task has `start === end`.
+- `level` is 0, 1 or 2. A row's children are the deeper rows after it, up to
+  the next row at its own depth or shallower. No row is more than one deeper
+  than the row above it, and `unpackDoc` repairs any that are.
+- A row with children is drawn spanning them (`spans(items)` gives what is
+  drawn); its own `start` and `end` are kept but not shown.
+- `color` is `#rrggbb`. Absent, a row takes its top-level row's colour from the
+  palette.
+- `progress` is 1–100 per cent done; absent is not started.
+- `milestone: true` makes a one-day point (`start === end`), drawn as a diamond.
+- `after` lists the ids of rows this one starts after (finish-to-start).
+  `reschedule(items, workdays)` pushes rows that start too early: only later,
+  keeping their length, onto a working day when `workdays`. A link to a row
+  the row contains or is in, or one that loops, is refused by `canDepend` and
+  dropped by `unpackDoc`.
+- `unpackDoc` drops rows without readable dates and puts reversed dates in order.
+
+`display` is how the page shows the timeline, and print and PDF are the page:
+`{ detail?: 'tasks' | 'phases', density?: 'compact', labels?: true }`. Absent
+is every row, comfortable rows, and names only in the names column. Word
+follows `detail` too.
+
+Build one from text with `timelineFromText(text)`, which returns
+`{ block, errors }` and reads the ```` ```timeline ```` fence format in SKILL.md.
+`timelineToText(block)` writes it back.
 
 ## Runs
 
@@ -77,7 +108,10 @@ PAGE and NUMPAGES fields in the `.docx`, `counter(page)` in print. A band sits
 0.5in from the paper's edge, so the margin must be tall enough to hold it (a
 three-line letterhead wants about 1.35in at the top); `validate.mjs` warns.
 A document with a header or footer is written as format version 3; one without
-stays version 2.
+stays version 2. A document holding a timeline is version 4, so a ByteCanvas
+from before timelines refuses it rather than dropping the chart. One whose
+timeline uses progress, milestones, links, working days, `display`, or the
+quarter or year scale is version 5, since a reader of 4 would drop those.
 
 ## `styles`
 
@@ -102,3 +136,6 @@ points between list items. `roles` has `title`, `p`, `h1`, `h2`, `h3`, `quote`,
 `buildDocx({ title, blocks, media, setup, styles })` returns the bytes. Headings
 are Word's own `Heading 1`–`3`, the style set becomes Word's styles, lists are
 real numbering and pictures are inline at their share of the page's text width.
+A timeline is a table whose bars are shaded cells, one column per day, week or
+month (moving to a coarser scale past 26 columns), with phases in a darker
+shade of their colour.
