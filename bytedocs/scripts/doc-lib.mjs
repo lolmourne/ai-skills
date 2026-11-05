@@ -182,6 +182,24 @@ function runsEqual(a, b) {
 function textBlock(type = "p", runs = [], extra = {}) {
   return { id: newId(), type, runs, ...extra };
 }
+function breakPageAt(blocks, id, start, end = start, carry = () => ({})) {
+  const index = blocks.findIndex((b) => b.id === id);
+  const block = blocks[index];
+  if (!block || !isTextBlock(block)) return null;
+  const [from, to] = start <= end ? [start, end] : [end, start];
+  const runs = deleteRange(block.runs, from, to);
+  const brk = { id: newId(), type: "pagebreak" };
+  const out = [...blocks];
+  if (from === 0) {
+    out.splice(index, 1, brk, { ...block, runs });
+    return { blocks: out, focus: { key: block.id, offset: 0 } };
+  }
+  const [left, right] = splitRuns(runs, from);
+  const { id: _id, runs: _runs, ...props } = block;
+  const next = runsLength(right) ? { ...props, id: newId(), runs: right } : textBlock(followingType(block.type), [], carry(followingType(block.type)));
+  out.splice(index, 1, { ...block, runs: left }, brk, next);
+  return { blocks: out, focus: { key: next.id, offset: 0 } };
+}
 function emptyTable(rows = 3, cols = 3) {
   return {
     id: newId(),
@@ -236,7 +254,7 @@ function slides(blocks) {
     current.push(b);
   }
   if (current.length) out.push(current);
-  return out.filter((s) => s.some((b) => !(isTextBlock(b) && b.type === "p" && !plainText(b.runs).trim())));
+  return out.filter((s) => s.some((b) => b.type !== "pagebreak" && !(isTextBlock(b) && b.type === "p" && !plainText(b.runs).trim())));
 }
 function outline(blocks) {
   const out = [];
@@ -476,6 +494,7 @@ function blocksToMarkdown(blocks, title = "") {
   if (title.trim()) parts.push(`# ${title.trim()}`);
   let prevList = false;
   blocks.forEach((b, index) => {
+    if (b.type === "pagebreak") return;
     let chunk;
     const list = isTextBlock(b) && (b.type === "bullet" || b.type === "number" || b.type === "todo");
     if (isTextBlock(b)) {
@@ -965,6 +984,7 @@ function readBlock(v, media) {
     return block;
   }
   if (b.type === "divider") return { id, type: "divider" };
+  if (b.type === "pagebreak") return { id, type: "pagebreak" };
   if (b.type === "figure") {
     if (typeof b.media !== "string" || !media[b.media]) {
       throw new DocFormatError(`a figure points at a picture that is not in the file`);
@@ -1302,6 +1322,8 @@ function buildDocx(input, when = /* @__PURE__ */ new Date()) {
       }
     } else if (b.type === "divider") {
       body += para(null, "", '<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="D1D5DB"/></w:pBdr>');
+    } else if (b.type === "pagebreak") {
+      body += '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
     } else if (b.type === "figure") {
       const m2 = input.media.get(b.media);
       if (m2) body += figureXml(ctx, b.width, m2, b.caption);
@@ -1378,6 +1400,7 @@ export {
   bandToText,
   blockText,
   blocksToMarkdown,
+  breakPageAt,
   buildDocx,
   clearStyle,
   concatRuns,

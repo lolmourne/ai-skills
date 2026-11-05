@@ -67,6 +67,10 @@ for (const b of doc.blocks) {
 	if (b.type === 'figure') {
 		flush();
 		parts.push(figureLine(b));
+	} else if (b.type === 'pagebreak') {
+		// The app's Markdown has no page; this line is what build.mjs reads back as one.
+		flush();
+		parts.push('<!-- pagebreak -->');
 	} else run.push(b);
 }
 flush();

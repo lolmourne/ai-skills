@@ -38,6 +38,7 @@ Every block has an `id`, unique in the document (`newId()`).
 | `p`, `h1`, `h2`, `h3`, `quote`, `code` | `runs` |
 | `bullet`, `number`, `todo` | `runs`, `indent` (0–4, also on `p`), `checked` (to-do) |
 | `divider` | none |
+| `pagebreak` | none — what follows starts a new page; Word's own page break in `.docx`, absent from Markdown (`read.mjs` writes `<!-- pagebreak -->`) |
 | `figure` | `media` (id), `width`, `caption` (plain text) |
 | `table` | `rows`: `rows[r][c]` is the runs of a cell; the first row is the header. Optional `widths`, `heights`, `pictures` (below) |
 

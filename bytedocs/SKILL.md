@@ -64,13 +64,21 @@ Text with **bold**, *italic*, `code` and [links](https://example.com).
 > A quote
 
 ---
+
+<!-- pagebreak -->
+
+# Appendix
 ```
 
 Everything is optional except some content. **Headings:** with a `title:`, `# `
 is Heading 1. With no `title:`, a document opening with its only `# ` takes it
 as the title and moves the other headings up a level. Only three levels exist:
 `####` and deeper become Heading 3. Start at `# `: `## ` first is a skipped level,
-and `validate.mjs` says so. A table's first row is its header.
+and `validate.mjs` says so. A table's first row is its header. `---` is a
+divider line; `<!-- pagebreak -->` on a line of its own is a page break — what
+follows starts a new page, on screen, in print and in Word (Ctrl+Enter in the
+app). Use it for an appendix or a cover page, not to tidy layout: tables
+already break between rows and headings stay with their text.
 
 | Front matter | Values |
 |---|---|

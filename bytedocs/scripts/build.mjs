@@ -119,6 +119,8 @@ function figure(caption, path, opts) {
 }
 
 const FIGURE = /^!\[([^\]]*)\]\(\s*([^\s)]+)(?:\s+"([^"]*)")?\s*\)\s*$/;
+/** A page break: Markdown has none, so a comment other readers hide, on a line of its own. */
+const PAGE_BREAK = /^<!--\s*page\s*break\s*-->$/i;
 
 /** Markdown around figures: the reader has no images, deliberately, so they are split out first. */
 function bodyToBlocks(body) {
@@ -131,6 +133,11 @@ function bodyToBlocks(body) {
 	let fenced = false;
 	for (const line of body.split(/\r?\n/)) {
 		if (/^\s*(```|~~~)/.test(line)) fenced = !fenced;
+		if (!fenced && PAGE_BREAK.test(line.trim())) {
+			flush();
+			out.push({ id: newId(), type: 'pagebreak' });
+			continue;
+		}
 		const m = fenced ? null : FIGURE.exec(line.trim());
 		if (!m) {
 			chunk.push(line);
